@@ -709,32 +709,39 @@ const CHARS = {
 };
 
 /* ------------------------------------------------------------------ champion avatars
-   Z version B: every playable body is a low-poly humanoid — a merged torso+head BufferGeometry
-   (one draw call) plus two separate swinging arm meshes (2 more draw calls). No rig, no skin,
-   no textures, no legs. The ~5MB gzip+base64 GLTF roster this file used to embed, and the
-   seven-champion name/class/flavor roster that survived that first cut, are both gone now:
-   there is nothing left to a champion but a gender and a color, so the roster is just four
-   colors, two per gender. `accent` is literally the whole model. Gender still decides which
-   CHARS stat/voice block a champion inherits (Player.reset merges the two). */
+   Z version B: every playable body is a low-poly humanoid — a torso box and a head box (each
+   its own mesh/material so the head can carry its own color) plus two separate swinging arm
+   meshes. No rig, no skin, no textures, no legs. 4 draw calls per champion now (was 1 flat box
+   at the start of this version). The ~5MB gzip+base64 GLTF roster this file used to embed, and
+   the seven-champion name/class/flavor roster that survived that first cut, are both gone now:
+   there is nothing left to a champion but a gender, a body color and a head color — four
+   champions, each a unique two-tone combo. `accent`/`headColor` are literally the whole model.
+   Gender still decides which CHARS stat/voice block a champion inherits (Player.reset merges
+   the two). */
 const AVATARS = {
   blue: { id: 'blue', gender: 'male', key: 'blue', short: 'BLUE', label: 'BLUE', cls: 'SURVIVOR',
-    desc: 'Same fight as everyone else. Just blue.', accent: 0x2f6fff },
+    desc: 'Same fight as everyone else. Just blue.', accent: 0x2f6fff, headColor: 0xffa62f },
   red: { id: 'red', gender: 'male', key: 'red', short: 'RED', label: 'RED', cls: 'SURVIVOR',
-    desc: 'Same fight as everyone else. Just red.', accent: 0xe6303f },
+    desc: 'Same fight as everyone else. Just red.', accent: 0xe6303f, headColor: 0x2fe6c9 },
   pink: { id: 'pink', gender: 'female', key: 'pink', short: 'PINK', label: 'PINK', cls: 'SURVIVOR',
-    desc: 'Same fight as everyone else. Just pink.', accent: 0xff4fa3 },
+    desc: 'Same fight as everyone else. Just pink.', accent: 0xff4fa3, headColor: 0xb6ff2f },
   purple: { id: 'purple', gender: 'female', key: 'purple', short: 'PURPLE', label: 'PURPLE', cls: 'SURVIVOR',
-    desc: 'Same fight as everyone else. Just purple.', accent: 0x9b3fd6 }
+    desc: 'Same fight as everyone else. Just purple.', accent: 0x9b3fd6, headColor: 0xffd23f }
 };
 const AVATAR_ORDER = { male: ['blue', 'red'], female: ['pink', 'purple'] };
 
-const AVATAR_SHOULDER = { x: 0.38, y: 1.44 }; // matches _bodyGeo's torso: 0.62 wide, 1.44 tall
+const AVATAR_SHOULDER = { x: 0.38, y: 1.44 }; // matches _torsoGeo's torso: 0.62 wide, 1.44 tall
 const Avatars = {
-  _mats: {}, _geo: null, _armGeo: null, _muzzleMat: null,
-  // one shared low-poly humanoid for every player body — feet at y=0, ~1.82m tall like the old survivor
-  _bodyGeo() {
-    if (!this._geo) this._geo = makeHumanoidGeo(0.62, 1.44, 0.4, 0.42, 0.38, 0.38);
-    return this._geo;
+  _mats: {}, _headMats: {}, _torso: null, _headGeo: null, _armGeo: null, _muzzleMat: null,
+  // torso and head are separate geometries now (each needs its own material for the head-color
+  // split); both still just one box, feet at y=0, ~1.82m tall like the old survivor
+  _torsoGeo() {
+    if (!this._torso) { this._torso = new THREE.BoxGeometry(0.62, 1.44, 0.4); this._torso.translate(0, 0.72, 0); }
+    return this._torso;
+  },
+  _headG() {
+    if (!this._headGeo) { this._headGeo = new THREE.BoxGeometry(0.42, 0.38, 0.38); this._headGeo.translate(0, 1.44 + 0.19, 0); }
+    return this._headGeo;
   },
   _armG() {
     if (!this._armGeo) this._armGeo = makeArmGeo(0.17, 1.2, 0.17);
@@ -743,6 +750,10 @@ const Avatars = {
   _mat(id) {
     if (!this._mats[id]) this._mats[id] = new THREE.MeshLambertMaterial({ color: (AVATARS[id] || AVATARS.blue).accent });
     return this._mats[id];
+  },
+  _headMat(id) {
+    if (!this._headMats[id]) this._headMats[id] = new THREE.MeshLambertMaterial({ color: (AVATARS[id] || AVATARS.blue).headColor });
+    return this._headMats[id];
   },
   _flash() {
     if (!this._muzzleMat) this._muzzleMat = new THREE.SpriteMaterial({ map: TEX.muzzle, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, color: 0xffe0b0 });
@@ -755,12 +766,13 @@ const Avatars = {
   async spawn(id) {
     const av = AVATARS[id] || AVATARS.blue;
     const mat = this._mat(av.id);
-    const body = new THREE.Mesh(this._bodyGeo(), mat);
+    const body = new THREE.Mesh(this._torsoGeo(), mat);
+    const head = new THREE.Mesh(this._headG(), this._headMat(av.id));
     const armL = new THREE.Mesh(this._armG(), mat); armL.position.set(-AVATAR_SHOULDER.x, AVATAR_SHOULDER.y, 0);
     const armR = new THREE.Mesh(this._armG(), mat); armR.position.set(AVATAR_SHOULDER.x, AVATAR_SHOULDER.y, 0);
-    const root = new THREE.Group(); root.add(body); root.add(armL); root.add(armR);
+    const root = new THREE.Group(); root.add(body); root.add(head); root.add(armL); root.add(armR);
     const flash = this._flash(); root.add(flash);
-    return { kind: 'gltf', g: root, mixer: null, actions: {}, current: 'idle', flash: flash, avatarId: av.id, body: body, armL: armL, armR: armR, armT: rnd(0, 6) };
+    return { kind: 'gltf', g: root, mixer: null, actions: {}, current: 'idle', flash: flash, avatarId: av.id, body: body, head: head, armL: armL, armR: armR, armT: rnd(0, 6) };
   },
   // no skeleton, no walk cycle — the box body just glides on position/yaw (set by the caller
   // before this runs). The only limb that swings is the arms, driven by `gait` (0 idle..1
@@ -2133,15 +2145,17 @@ const Bullets = {
 };
 
 /* ------------------------------------------------------------------ zombies (pooled procedural meshes + flow-field AI) */
+// All five palettes darkened a notch from their original values — runner especially (its
+// bright yellow-olive read as the odd one out against the rest of a murkier horde).
 const ZTYPES = {
-  walker: { hpMul: 1, speedMul: 1, scale: 1, dmg: 12, radius: 0.45, height: 1.95, reach: 1.7, big: false, lean: 0.05, color: 0x5c6b46 },
-  runner: { hpMul: 0.62, speedMul: 1.72, scale: 0.92, dmg: 9, radius: 0.4, height: 1.8, reach: 1.6, big: false, lean: 0.28, color: 0xb8a836 },
-  brute: { hpMul: 3.6, speedMul: 0.7, scale: 1.4, dmg: 28, radius: 0.64, height: 2.7, reach: 2.1, big: true, lean: 0.02, color: 0x7a3420 },
+  walker: { hpMul: 1, speedMul: 1, scale: 1, dmg: 12, radius: 0.45, height: 1.95, reach: 1.7, big: false, lean: 0.05, color: 0x3c4630 },
+  runner: { hpMul: 0.62, speedMul: 1.72, scale: 0.92, dmg: 9, radius: 0.4, height: 1.8, reach: 1.6, big: false, lean: 0.28, color: 0x655c1e },
+  brute: { hpMul: 3.6, speedMul: 0.7, scale: 1.4, dmg: 28, radius: 0.64, height: 2.7, reach: 2.1, big: true, lean: 0.02, color: 0x552416 },
   // Specials. `special` keeps them out of the ordinary wave roll — the Director hands these out.
   // The tank gets its own hp curve: the wave scaling that keeps walkers honest turns a boss into
   // a five-minute magazine dump by wave 15.
-  hunter: { hpMul: 0.85, speedMul: 1.45, scale: 0.94, dmg: 10, radius: 0.42, height: 1.86, reach: 1.7, big: false, lean: 0.42, special: true, pounce: true, pts: 3, color: 0x7a2fae },
-  tank: { hpMul: 14, hpWave: 1.09, speedMul: 0.78, scale: 2.0, dmg: 40, radius: 0.95, height: 3.9, reach: 3.1, big: true, lean: 0.02, special: true, boss: true, pts: 14, color: 0x2a1a1a }
+  hunter: { hpMul: 0.85, speedMul: 1.45, scale: 0.94, dmg: 10, radius: 0.42, height: 1.86, reach: 1.7, big: false, lean: 0.42, special: true, pounce: true, pts: 3, color: 0x4f1f71 },
+  tank: { hpMul: 14, hpWave: 1.09, speedMul: 0.78, scale: 2.0, dmg: 40, radius: 0.95, height: 3.9, reach: 3.1, big: true, lean: 0.02, special: true, boss: true, pts: 14, color: 0x1f1313 }
 };
 const ZG = {};
 /* Z version B: every zombie is a low-poly humanoid — one merged torso+head BufferGeometry
