@@ -626,6 +626,12 @@ function makeHumanoidGeo(bodyW, bodyH, bodyD, headW, headH, headD) {
   const head = new THREE.BoxGeometry(headW, headH, headD); head.translate(0, bodyH + headH / 2, 0);
   return mergeBoxGeoms([body, head]);
 }
+// A single arm box, pivoted at its TOP (the shoulder) instead of its center, so rotating the
+// mesh swings it like a pendulum instead of spinning it in place. No legs (per design call) —
+// arms are the one limb worth animating; everything else stays the static merged silhouette.
+function makeArmGeo(w, h, d) {
+  const g = new THREE.BoxGeometry(w, h, d); g.translate(0, -h / 2, 0); return g;
+}
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
@@ -703,13 +709,13 @@ const CHARS = {
 };
 
 /* ------------------------------------------------------------------ champion avatars
-   Z version B: every playable body is one low-poly humanoid (torso + head, merged into a single
-   BufferGeometry) — no rig, no skin, no textures, one draw call. The ~5MB gzip+base64 GLTF
-   roster this file used to embed, and the seven-champion name/class/flavor roster that survived
-   that first cut, are both gone now: there is nothing left to a champion but a gender and a
-   color, so the roster is just four colors, two per gender. `accent` is literally the whole
-   model. Gender still decides which CHARS stat/voice block a champion inherits (Player.reset
-   merges the two). */
+   Z version B: every playable body is a low-poly humanoid — a merged torso+head BufferGeometry
+   (one draw call) plus two separate swinging arm meshes (2 more draw calls). No rig, no skin,
+   no textures, no legs. The ~5MB gzip+base64 GLTF roster this file used to embed, and the
+   seven-champion name/class/flavor roster that survived that first cut, are both gone now:
+   there is nothing left to a champion but a gender and a color, so the roster is just four
+   colors, two per gender. `accent` is literally the whole model. Gender still decides which
+   CHARS stat/voice block a champion inherits (Player.reset merges the two). */
 const AVATARS = {
   blue: { id: 'blue', gender: 'male', key: 'blue', short: 'BLUE', label: 'BLUE', cls: 'SURVIVOR',
     desc: 'Same fight as everyone else. Just blue.', accent: 0x2f6fff },
@@ -722,12 +728,17 @@ const AVATARS = {
 };
 const AVATAR_ORDER = { male: ['blue', 'red'], female: ['pink', 'purple'] };
 
+const AVATAR_SHOULDER = { x: 0.38, y: 1.44 }; // matches _bodyGeo's torso: 0.62 wide, 1.44 tall
 const Avatars = {
-  _mats: {}, _geo: null, _muzzleMat: null,
+  _mats: {}, _geo: null, _armGeo: null, _muzzleMat: null,
   // one shared low-poly humanoid for every player body — feet at y=0, ~1.82m tall like the old survivor
   _bodyGeo() {
     if (!this._geo) this._geo = makeHumanoidGeo(0.62, 1.44, 0.4, 0.42, 0.38, 0.38);
     return this._geo;
+  },
+  _armG() {
+    if (!this._armGeo) this._armGeo = makeArmGeo(0.17, 1.2, 0.17);
+    return this._armGeo;
   },
   _mat(id) {
     if (!this._mats[id]) this._mats[id] = new THREE.MeshLambertMaterial({ color: (AVATARS[id] || AVATARS.blue).accent });
@@ -743,16 +754,28 @@ const Avatars = {
   // (Player, Net, Bots) still works unchanged
   async spawn(id) {
     const av = AVATARS[id] || AVATARS.blue;
-    const body = new THREE.Mesh(this._bodyGeo(), this._mat(av.id));
-    const root = new THREE.Group(); root.add(body);
+    const mat = this._mat(av.id);
+    const body = new THREE.Mesh(this._bodyGeo(), mat);
+    const armL = new THREE.Mesh(this._armG(), mat); armL.position.set(-AVATAR_SHOULDER.x, AVATAR_SHOULDER.y, 0);
+    const armR = new THREE.Mesh(this._armG(), mat); armR.position.set(AVATAR_SHOULDER.x, AVATAR_SHOULDER.y, 0);
+    const root = new THREE.Group(); root.add(body); root.add(armL); root.add(armR);
     const flash = this._flash(); root.add(flash);
-    return { kind: 'gltf', g: root, mixer: null, actions: {}, current: 'idle', flash: flash, avatarId: av.id, body: body };
+    return { kind: 'gltf', g: root, mixer: null, actions: {}, current: 'idle', flash: flash, avatarId: av.id, body: body, armL: armL, armR: armR, armT: rnd(0, 6) };
   },
   // no skeleton, no walk cycle — the box body just glides on position/yaw (set by the caller
-  // before this runs); the only pose left worth keeping is the downed tilt
+  // before this runs). The only limb that swings is the arms, driven by `gait` (0 idle..1
+  // sprinting); the downed tilt is the only other pose left worth keeping.
   pose(m, dt, gait, downed) {
-    if (downed) { m.g.rotation.x = -1.15; m.g.position.y = 0.1; }
-    else if (m.g.rotation.x !== 0) { m.g.rotation.x = 0; m.g.position.y = 0; }
+    if (downed) {
+      m.g.rotation.x = -1.15; m.g.position.y = 0.1;
+      if (m.armL) m.armL.rotation.x = m.armR.rotation.x = -0.3;
+      return;
+    }
+    if (m.g.rotation.x !== 0) { m.g.rotation.x = 0; m.g.position.y = 0; }
+    if (!m.armL) return; // champion body still loading async — nothing to swing yet
+    m.armT += dt * (1.6 + gait * 7);
+    const swing = Math.sin(m.armT) * Math.max(0.2, gait) * 0.7;
+    m.armL.rotation.x = swing; m.armR.rotation.x = -swing;
   }
 };
 
@@ -2121,12 +2144,15 @@ const ZTYPES = {
   tank: { hpMul: 14, hpWave: 1.09, speedMul: 0.78, scale: 2.0, dmg: 40, radius: 0.95, height: 3.9, reach: 3.1, big: true, lean: 0.02, special: true, boss: true, pts: 14, color: 0x2a1a1a }
 };
 const ZG = {};
-/* Z version B: every zombie is ONE low-poly humanoid (a torso box + a head box, merged into a
-   single BufferGeometry) — still one draw call, no textures, no limbs, no skeleton. That's the
-   whole point of this version: collapsing a 6-mesh (7-draw-call) procedural body down to 1 draw
-   call is what lets the zombie cap go up without the frame rate going down. */
+/* Z version B: every zombie is a low-poly humanoid — one merged torso+head BufferGeometry
+   (still a single draw call) plus two separate arm meshes that actually swing when it moves.
+   No legs; they added the most draw calls (2 more meshes) for the least readable motion at a
+   distance, and legs barely reads through the ground clutter anyway. 3 draw calls per zombie
+   is still a fraction of the 7-draw-call procedural body this version replaced. */
+const ZOMBIE_SHOULDER = { x: 0.38, y: 1.5 }; // matches ZG.body's torso: 0.6 wide, 1.55 tall
 function buildZombieGeometries() {
   ZG.body = makeHumanoidGeo(0.6, 1.55, 0.42, 0.4, 0.4, 0.38); // feet at y=0, ~1.95 tall overall
+  ZG.arm = makeArmGeo(0.17, 1.3, 0.18);
   ZG.shadow = new THREE.PlaneGeometry(1.5, 1.5); ZG.shadow.rotateX(-Math.PI / 2);
   ZG.shadowMat = new THREE.MeshBasicMaterial({ map: TEX.shadow, transparent: true, depthWrite: false, color: 0xffffff, opacity: 0.55 });
 }
@@ -2143,8 +2169,10 @@ class Zombie {
     const g = new THREE.Group(); this.group = g;
     this.mat = new THREE.MeshLambertMaterial({ color: 0x5c6b46 });
     this.body = new THREE.Mesh(ZG.body, this.mat);
+    this.armL = new THREE.Mesh(ZG.arm, this.mat); this.armL.position.set(-ZOMBIE_SHOULDER.x, ZOMBIE_SHOULDER.y, 0);
+    this.armR = new THREE.Mesh(ZG.arm, this.mat); this.armR.position.set(ZOMBIE_SHOULDER.x, ZOMBIE_SHOULDER.y, 0);
     this.shadow = new THREE.Mesh(ZG.shadow, ZG.shadowMat); this.shadow.position.y = 0.012;
-    g.add(this.body); g.visible = false;
+    g.add(this.body); g.add(this.armL); g.add(this.armR); g.visible = false;
     R.scene.add(g); R.scene.add(this.shadow); this.shadow.visible = false;
   }
   spawn(typeName, x, z, wave) {
@@ -2417,6 +2445,7 @@ class Zombie {
     this.shadow.position.set(this.x, 0.012, this.z);
     const a = this.animT, s = Math.sin(a);
     this.body.rotation.set(0, 0, 0); this.body.position.y = 0;
+    this.armL.rotation.set(0, 0, 0); this.armR.rotation.set(0, 0, 0);
     if (st === 'dead') {
       const k = easeOut(Math.min(1, this.t / 0.55));
       g.rotation.set(T.lean - k * 1.5, this.yaw, 0);
@@ -2426,12 +2455,14 @@ class Zombie {
     if (st === 'crouch' || st === 'pounce') {
       const coil = st === 'crouch' ? Math.min(1, this.t / CFG.hunterWindup) : 1;
       g.rotation.x = T.lean + (st === 'pounce' ? 0.55 : 0.28 + coil * 0.5);
+      this.armL.rotation.x = this.armR.rotation.x = -1.3 * coil; // reaching forward into the leap
       if (st === 'pounce') this.shadow.scale.setScalar(T.scale * Math.max(0.45, 1 - this.y * 0.14));
       return;
     }
     if (st === 'pin') {
       const sl = Math.sin(this.animT * 2.4);
       g.rotation.x = T.lean + 0.38; this.body.rotation.z = sl * 0.06;
+      this.armL.rotation.x = -1.2 + sl * 0.15; this.armR.rotation.x = -1.2 - sl * 0.15; // clawing at the pinned survivor
       return;
     }
     if (this.stunT > 0) {
@@ -2441,10 +2472,12 @@ class Zombie {
     }
     if (st === 'chase' && this.shadow.scale.x !== T.scale) this.shadow.scale.setScalar(T.scale);
     this.body.position.y = Math.abs(s) * 0.045; this.body.rotation.x = 0.08 * Math.abs(s);
+    const swing = s * 0.7; this.armL.rotation.x = swing; this.armR.rotation.x = -swing;
     if (st === 'attack') {
       const t = this.t; let ax;
       if (t < 0.42) ax = lerp(0, -0.35, easeOut(t / 0.42)); else if (t < 0.6) ax = lerp(-0.35, 0.25, (t - 0.42) / 0.18); else ax = lerp(0.25, 0, easeOut((t - 0.6) / 0.4));
       this.body.rotation.x += ax;
+      this.armR.rotation.x = ax * 2.2 - 1.4; // the striking arm leads the lunge
     }
   }
 }
@@ -3228,6 +3261,9 @@ const Bots = {
       if (b.avatarId !== myAvatarId || b._avGen !== gen) { R.scene.remove(body.g); return; }
       for (const c of b.vis.g.children.slice()) { if (c !== b.vis.flash) b.vis.g.remove(c); }
       b.vis.g.add(body.g); b.vis.mixer = body.mixer; b.vis.actions = body.actions; b.vis.current = body.current;
+      // Avatars.pose() needs these to swing the arms — same objects Avatars.spawn() built, just
+      // handed up onto the wrapper this bot's draw() loop actually calls pose() with
+      b.vis.armL = body.armL; b.vis.armR = body.armR; b.vis.armT = body.armT;
     }).catch(e => console.error('bot avatar failed to load', e));
   },
 
@@ -4731,6 +4767,9 @@ const Net = {
     Avatars.spawn(peer.char).then(body => {
       if (peer.vis !== m) { R.scene.remove(body.g); return; } // peer left/rejoined before this landed
       m.g.add(body.g); m.mixer = body.mixer; m.actions = body.actions; m.ready = true;
+      // Avatars.pose() needs these to swing the arms — handed up onto the wrapper the draw loop
+      // actually calls pose() with, same as mixer/actions above
+      m.armL = body.armL; m.armR = body.armR; m.armT = body.armT;
     }).catch(e => console.error('peer avatar failed to load', e));
     return peer.vis;
   },
