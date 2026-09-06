@@ -6,12 +6,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#1a0f08">
+<meta name="theme-color" content="#071f26">
 <meta name="description" content="Dust & Dead — a first-person zombie wave survival shooter set in a sun-baked desert arena. Touch-first, single file, no downloads.">
 <title>Dust &amp; Dead — Z Version B</title>
-<!-- App icon: a sun-bleached skull against the desert sun. This inline SVG is the tab icon —
-     boot() draws a richer 180px version onto a canvas for the iOS home screen (makeAppIcon). -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232a1508'/%3E%3Ccircle cx='32' cy='31' r='23' fill='%23ff7a1a'/%3E%3Ccircle cx='32' cy='31' r='15' fill='%23ffc36b'/%3E%3Cpath d='M2 50c9-5 16 2 30-1s21-6 30-1v17H2z' fill='%238f3c06'/%3E%3Cpath d='M2 57c11-4 18 2 30 0s19-4 30-1v11H2z' fill='%235c2405'/%3E%3Cpath d='M32 9c-11 0-18 7-18 17 0 6 2 11 6 14v6c0 2 2 4 4 4h16c2 0 4-2 4-4v-6c4-3 6-8 6-14 0-10-7-17-18-17z' fill='%23f2e3c4'/%3E%3Cellipse cx='24' cy='26' rx='6' ry='6.6' fill='%23200f04'/%3E%3Cellipse cx='40' cy='26' rx='6' ry='6.6' fill='%23200f04'/%3E%3Ccircle cx='24' cy='27' r='2.1' fill='%23ff5a10'/%3E%3Ccircle cx='40' cy='27' r='2.1' fill='%23ff5a10'/%3E%3Cpath d='M32 31l-3.4 7h6.8z' fill='%23200f04'/%3E%3Cpath d='M25 43h14M29 42v8M35 42v8' stroke='%23200f04' stroke-width='2.4'/%3E%3C/svg%3E">
+<!-- App icon: Z Version B gets its own cool-cyan palette (vs. main's desert orange) so the two
+     builds are never confused at a glance, tab or home screen alike — same skull silhouette,
+     recolored to match the flat-box aesthetic. boot() draws a matching 180px canvas version for
+     the iOS home screen (makeAppIcon). -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23071f26'/%3E%3Ccircle cx='32' cy='31' r='23' fill='%2317b8c9'/%3E%3Ccircle cx='32' cy='31' r='15' fill='%23a6fff0'/%3E%3Cpath d='M2 50c9-5 16 2 30-1s21-6 30-1v17H2z' fill='%230f4a54'/%3E%3Cpath d='M2 57c11-4 18 2 30 0s19-4 30-1v11H2z' fill='%23082f36'/%3E%3Cpath d='M32 9c-11 0-18 7-18 17 0 6 2 11 6 14v6c0 2 2 4 4 4h16c2 0 4-2 4-4v-6c4-3 6-8 6-14 0-10-7-17-18-17z' fill='%23eaf6f2'/%3E%3Cellipse cx='24' cy='26' rx='6' ry='6.6' fill='%23071f26'/%3E%3Cellipse cx='40' cy='26' rx='6' ry='6.6' fill='%23071f26'/%3E%3Ccircle cx='24' cy='27' r='2.1' fill='%2317e8ff'/%3E%3Ccircle cx='40' cy='27' r='2.1' fill='%2317e8ff'/%3E%3Cpath d='M32 31l-3.4 7h6.8z' fill='%23071f26'/%3E%3Cpath d='M25 43h14M29 42v8M35 42v8' stroke='%23071f26' stroke-width='2.4'/%3E%3C/svg%3E">
 <style>
 :root{
   --accent:#ff7a1a;
@@ -4947,21 +4949,22 @@ const Board = {
 };
 /* ------------------------------------------------------------------ app icon
    iOS reads apple-touch-icon off the live DOM at the moment you Add to Home Screen, so painting it
-   at boot keeps the game one file with no base64 blob wedged into the source. Same motif as the
-   tab icon in <head> — a sun-bleached skull against the desert sun — with the detail a 180px tile
-   can actually show and the 64-unit layout shared, so the two never drift apart. */
+   at boot keeps the game one file with no base64 blob wedged into the source. Same skull silhouette
+   as the tab icon in <head>, recolored cyan (vs. main's desert orange) so Z Version B is never
+   mistaken for the other build — with the detail a 180px tile can actually show and the 64-unit
+   layout shared, so the two never drift apart. */
 function makeAppIcon() {
   try {
     const S = 180, k = S / 64, c = mkCanvas(S, S), g = c.getContext('2d');
     const sky = g.createLinearGradient(0, 0, 0, S);
-    sky.addColorStop(0, '#3c1d0a'); sky.addColorStop(0.55, '#7a3208'); sky.addColorStop(1, '#c25a10');
+    sky.addColorStop(0, '#04151b'); sky.addColorStop(0.55, '#0a3038'); sky.addColorStop(1, '#12545e');
     g.fillStyle = sky; g.fillRect(0, 0, S, S);
     const sun = g.createRadialGradient(S / 2, S * 0.46, 4, S / 2, S * 0.46, S * 0.44);
-    sun.addColorStop(0, '#fff2cc'); sun.addColorStop(0.34, '#ffb347'); sun.addColorStop(0.7, '#ff7a1a'); sun.addColorStop(1, 'rgba(255,90,10,0)');
+    sun.addColorStop(0, '#e8fffb'); sun.addColorStop(0.34, '#a6fff0'); sun.addColorStop(0.7, '#17b8c9'); sun.addColorStop(1, 'rgba(23,184,201,0)');
     g.fillStyle = sun; g.beginPath(); g.arc(S / 2, S * 0.46, S * 0.44, 0, TAU); g.fill();
-    g.fillStyle = '#8f3c06'; g.beginPath(); g.moveTo(0, S * 0.79);
+    g.fillStyle = '#0f4a54'; g.beginPath(); g.moveTo(0, S * 0.79);
     g.bezierCurveTo(S * 0.3, S * 0.69, S * 0.62, S * 0.87, S, S * 0.75); g.lineTo(S, S); g.lineTo(0, S); g.closePath(); g.fill();
-    g.fillStyle = '#4e1e04'; g.beginPath(); g.moveTo(0, S * 0.89);
+    g.fillStyle = '#082f36'; g.beginPath(); g.moveTo(0, S * 0.89);
     g.bezierCurveTo(S * 0.35, S * 0.81, S * 0.7, S * 0.96, S, S * 0.87); g.lineTo(S, S); g.lineTo(0, S); g.closePath(); g.fill();
     g.save(); g.scale(k, k);
     g.beginPath();
@@ -4974,18 +4977,18 @@ function makeAppIcon() {
     g.bezierCurveTo(48, 37, 50, 32, 50, 26);
     g.bezierCurveTo(50, 16, 44, 9, 32, 9);
     g.closePath();
-    g.fillStyle = '#f2e3c4'; g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 5; g.shadowOffsetY = 1.5; g.fill();
+    g.fillStyle = '#eaf6f2'; g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 5; g.shadowOffsetY = 1.5; g.fill();
     g.shadowBlur = 0; g.shadowOffsetY = 0;
-    g.fillStyle = '#200f04';
+    g.fillStyle = '#071f26';
     g.beginPath(); g.ellipse(24, 26, 6, 6.6, 0, 0, TAU); g.fill();
     g.beginPath(); g.ellipse(40, 26, 6, 6.6, 0, 0, TAU); g.fill();
     g.beginPath(); g.moveTo(32, 31); g.lineTo(28.6, 38); g.lineTo(35.4, 38); g.closePath(); g.fill();
-    // the horde's eyes, same ember as ZG.eyeMat
-    g.fillStyle = '#ff5a10'; g.shadowColor = '#ff5a10'; g.shadowBlur = 4;
+    // the horde's eyes, recolored cyan to match this build's palette
+    g.fillStyle = '#17e8ff'; g.shadowColor = '#17e8ff'; g.shadowBlur = 4;
     g.beginPath(); g.arc(24, 27, 2.2, 0, TAU); g.fill();
     g.beginPath(); g.arc(40, 27, 2.2, 0, TAU); g.fill();
     g.shadowBlur = 0;
-    g.strokeStyle = '#200f04'; g.lineWidth = 2.4; g.lineCap = 'round';
+    g.strokeStyle = '#071f26'; g.lineWidth = 2.4; g.lineCap = 'round';
     g.beginPath(); g.moveTo(25, 43); g.lineTo(39, 43); g.moveTo(29, 42); g.lineTo(29, 50); g.moveTo(35, 42); g.lineTo(35, 50); g.stroke();
     g.restore();
     let link = document.querySelector('link[rel="apple-touch-icon"]');
