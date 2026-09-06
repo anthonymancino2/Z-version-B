@@ -599,6 +599,33 @@ function vnoise(x, y) {
 function fbm(x, y, oct) { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < oct; i++) { s += vnoise(x * f, y * f) * a; n += a; a *= .5; f *= 2.03; } return s / n; }
 function easeOut(t) { return 1 - (1 - t) * (1 - t); }
 function easeIn(t) { return t * t; }
+// Flattens N BufferGeometries (already positioned/translated where they should sit) into ONE —
+// still a single draw call, but low-poly-humanoid-shaped instead of one flat slab. No
+// BufferGeometryUtils add-on needed; box geometries are tiny (24 verts) so a manual concat is cheap.
+function mergeBoxGeoms(geoms) {
+  const pos = [], norm = [], uv = [], idx = []; let vOff = 0;
+  for (const g of geoms) {
+    const p = g.attributes.position.array, n = g.attributes.normal.array, u = g.attributes.uv.array, ix = g.index.array;
+    for (let i = 0; i < p.length; i++) pos.push(p[i]);
+    for (let i = 0; i < n.length; i++) norm.push(n[i]);
+    for (let i = 0; i < u.length; i++) uv.push(u[i]);
+    for (let i = 0; i < ix.length; i++) idx.push(ix[i] + vOff);
+    vOff += p.length / 3;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  out.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  out.setIndex(idx);
+  return out;
+}
+// One low-poly humanoid silhouette shared by zombies and player avatars alike: a tapered torso
+// box with a smaller head box merged on top, feet at y=0. Two boxes, one mesh, one draw call.
+function makeHumanoidGeo(bodyW, bodyH, bodyD, headW, headH, headD) {
+  const body = new THREE.BoxGeometry(bodyW, bodyH, bodyD); body.translate(0, bodyH / 2, 0);
+  const head = new THREE.BoxGeometry(headW, headH, headD); head.translate(0, bodyH + headH / 2, 0);
+  return mergeBoxGeoms([body, head]);
+}
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
@@ -676,39 +703,34 @@ const CHARS = {
 };
 
 /* ------------------------------------------------------------------ champion avatars
-   Z version B: every playable body is one flat-colored box — no rig, no skin, no textures, one
-   draw call. The ~5MB gzip+base64 GLTF roster this file used to embed is gone entirely, along
-   with the loader that parsed it; the seven-champion roster (four male, three female) survives
-   only as a color/name/flavor pick in the menu — `accent` is now literally the whole model.
-   Gender still decides which CHARS stat/voice block a champion inherits (Player.reset merges
-   the two). */
+   Z version B: every playable body is one low-poly humanoid (torso + head, merged into a single
+   BufferGeometry) — no rig, no skin, no textures, one draw call. The ~5MB gzip+base64 GLTF
+   roster this file used to embed, and the seven-champion name/class/flavor roster that survived
+   that first cut, are both gone now: there is nothing left to a champion but a gender and a
+   color, so the roster is just four colors, two per gender. `accent` is literally the whole
+   model. Gender still decides which CHARS stat/voice block a champion inherits (Player.reset
+   merges the two). */
 const AVATARS = {
-  cloud: { id: 'cloud', gender: 'male', key: 'cloud', short: 'CLOUD', label: 'CLOUD', cls: 'EX-SOLDIER',
-    desc: "Ex-soldier who won't talk about the company he used to keep.", accent: 0x3fa9d6 },
-  rhino: { id: 'rhino', gender: 'male', key: 'rhino', short: 'RHINO', label: 'GREEN RHINO RANGER', cls: 'FIELD RANGER',
-    desc: 'A scout who packs light and moves lighter.', accent: 0x4caf50 },
-  chopper: { id: 'chopper', gender: 'male', key: 'chopper', short: 'CHOPPER', label: 'CHOPPER', cls: 'OLD SALT',
-    desc: 'A sailor who has buried more crews than he can count.', accent: 0xc68a5a },
-  corsair: { id: 'corsair', gender: 'male', key: 'corsair', short: 'DUDU', label: 'DUDU THE PENGUIN', cls: 'COLD-BLOODED',
-    desc: "Nobody asked how a penguin ended up out here.", accent: 0x5dffe0 },
-  mage: { id: 'mage', gender: 'female', key: 'mage', short: 'FOX', label: 'NINE-TAILED FOX MAGE', cls: 'ARCANE DRIFTER',
-    desc: 'Traded the staff for a sidearm and kept the rest.', accent: 0x9b59b6 },
-  dragonlord: { id: 'dragonlord', gender: 'female', key: 'dragonlord', short: 'NYXARA', label: 'NYXARA', cls: 'DEMON QUEEN',
-    desc: 'Royalty from somewhere considerably worse than this.', accent: 0xff3b3b },
-  barbarian: { id: 'barbarian', gender: 'female', key: 'barbarian', short: 'AESIR', label: 'AESIR BARBARIAN', cls: 'STORM-FORGED',
-    desc: 'A warrior who has outlived every war she started.', accent: 0x21e6c1 }
+  blue: { id: 'blue', gender: 'male', key: 'blue', short: 'BLUE', label: 'BLUE', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just blue.', accent: 0x2f6fff },
+  red: { id: 'red', gender: 'male', key: 'red', short: 'RED', label: 'RED', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just red.', accent: 0xe6303f },
+  pink: { id: 'pink', gender: 'female', key: 'pink', short: 'PINK', label: 'PINK', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just pink.', accent: 0xff4fa3 },
+  purple: { id: 'purple', gender: 'female', key: 'purple', short: 'PURPLE', label: 'PURPLE', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just purple.', accent: 0x9b3fd6 }
 };
-const AVATAR_ORDER = { male: ['cloud', 'rhino', 'chopper', 'corsair'], female: ['mage', 'dragonlord', 'barbarian'] };
+const AVATAR_ORDER = { male: ['blue', 'red'], female: ['pink', 'purple'] };
 
 const Avatars = {
   _mats: {}, _geo: null, _muzzleMat: null,
-  // one shared box for every player body — feet at y=0, ~1.82m tall like the old survivor
+  // one shared low-poly humanoid for every player body — feet at y=0, ~1.82m tall like the old survivor
   _bodyGeo() {
-    if (!this._geo) { this._geo = new THREE.BoxGeometry(0.62, 1.82, 0.4); this._geo.translate(0, 0.91, 0); }
+    if (!this._geo) this._geo = makeHumanoidGeo(0.62, 1.44, 0.4, 0.42, 0.38, 0.38);
     return this._geo;
   },
   _mat(id) {
-    if (!this._mats[id]) this._mats[id] = new THREE.MeshLambertMaterial({ color: (AVATARS[id] || AVATARS.cloud).accent });
+    if (!this._mats[id]) this._mats[id] = new THREE.MeshLambertMaterial({ color: (AVATARS[id] || AVATARS.blue).accent });
     return this._mats[id];
   },
   _flash() {
@@ -720,7 +742,7 @@ const Avatars = {
   // a live body instance for one player/peer slot; kept async so every existing `.then()` caller
   // (Player, Net, Bots) still works unchanged
   async spawn(id) {
-    const av = AVATARS[id] || AVATARS.cloud;
+    const av = AVATARS[id] || AVATARS.blue;
     const body = new THREE.Mesh(this._bodyGeo(), this._mat(av.id));
     const root = new THREE.Group(); root.add(body);
     const flash = this._flash(); root.add(flash);
@@ -2099,12 +2121,12 @@ const ZTYPES = {
   tank: { hpMul: 14, hpWave: 1.09, speedMul: 0.78, scale: 2.0, dmg: 40, radius: 0.95, height: 3.9, reach: 3.1, big: true, lean: 0.02, special: true, boss: true, pts: 14, color: 0x2a1a1a }
 };
 const ZG = {};
-/* Z version B: every zombie is ONE flat-colored box — one draw call, no textures, no limbs.
-   That's the whole point of this version: collapsing a 6-mesh (7-draw-call) procedural body
-   down to 1 draw call is what lets the zombie cap go up without the frame rate going down. */
+/* Z version B: every zombie is ONE low-poly humanoid (a torso box + a head box, merged into a
+   single BufferGeometry) — still one draw call, no textures, no limbs, no skeleton. That's the
+   whole point of this version: collapsing a 6-mesh (7-draw-call) procedural body down to 1 draw
+   call is what lets the zombie cap go up without the frame rate going down. */
 function buildZombieGeometries() {
-  ZG.body = new THREE.BoxGeometry(0.6, 1.9, 0.42);
-  ZG.body.translate(0, 0.95, 0); // feet at y=0, matches the group's ground-level position
+  ZG.body = makeHumanoidGeo(0.6, 1.55, 0.42, 0.4, 0.4, 0.38); // feet at y=0, ~1.95 tall overall
   ZG.shadow = new THREE.PlaneGeometry(1.5, 1.5); ZG.shadow.rotateX(-Math.PI / 2);
   ZG.shadowMat = new THREE.MeshBasicMaterial({ map: TEX.shadow, transparent: true, depthWrite: false, color: 0xffffff, opacity: 0.55 });
 }
@@ -3605,7 +3627,7 @@ const Director = {
 const Game = {
   state: 'menu', time: 0, wave: 0, points: 0, kills: 0, shake: 0, insta: 0, dbl: 0, timeScale: 1, matchTime: 0,
   toSpawn: 0, spawnT: 0, waveActive: false, interT: 0, pickupT: 0, streak: 0, sayT: -99, heartT: 0, menuT: 0,
-  autoFire: false, voice: true, sound: true, charId: 'cloud', camMode: 'fp', squad: true, squadCount: 3,
+  autoFire: false, voice: true, sound: true, charId: 'blue', camMode: 'fp', squad: true, squadCount: 3,
   best: { wave: 0, points: 0 }, deathK: 0, deathRoll: 0, deathT: 0, seed: 0, coopMenu: false, _fp: { x: 0, z: 0 },
   fpsAcc: 0, fpsN: 0, fpsAvg: 16.7, fpsT: 0, resT: 0, chain: [], realDt: 0.016, newBest: false, _pt: { x: 0, z: 0 },
   init() {
@@ -3649,7 +3671,7 @@ const Game = {
     window.addEventListener('pagehide', () => { if (self.state === 'playing' && !Net.on()) self.pause(); });
     this.updateRotateHint(); window.addEventListener('resize', () => self.updateRotateHint());
     World.generate(Math.floor(Math.random() * 1e9));
-    this.selectChar('cloud');
+    this.selectChar('blue');
     Net.init(); Board.init(); Mqtt.start();
     const ver = $('verLine'); if (ver) ver.textContent = 'DUST & DEAD ' + GAME_VERSION;
   },
@@ -3697,7 +3719,7 @@ const Game = {
     build('cardsMale', 'male'); build('cardsFemale', 'female');
   },
   selectChar(id) {
-    if (!AVATARS[id]) id = 'cloud';
+    if (!AVATARS[id]) id = 'blue';
     this.charId = id;
     const gender = AVATARS[id].gender;
     document.body.classList.toggle('char-female', gender === 'female'); document.body.classList.toggle('char-male', gender === 'male');
@@ -3707,7 +3729,7 @@ const Game = {
   // merges the chosen champion's identity onto its gender's stat/voice block — this merged object
   // is what Player.char holds for the whole run
   charFor(id) {
-    const av = AVATARS[id] || AVATARS.cloud;
+    const av = AVATARS[id] || AVATARS.blue;
     return Object.assign({}, CHARS[av.gender], { id: av.id, short: av.short, name: av.label, accent: av.accent });
   },
   start(seed) {
