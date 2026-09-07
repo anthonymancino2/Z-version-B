@@ -656,10 +656,13 @@ const CFG = {
   playerR: 0.45, eyeH: 1.62,
   // Z version B: flat-colored one-draw-call zombies are ~4-6x cheaper than the old six-mesh
   // procedural body, so the cap can go up a lot without the frame rate going down — that's the
-  // whole point of this version (playability through sheer numbers). Cap scaled 4x along with
-  // the map area; the effect pools below got a more modest bump since most (bullets, particles)
-  // cycle fast enough that raw zombie count matters far less than it does for the cap itself.
-  maxZombies: 600, bullets: 280, particles: 3600, floaties: 72, pickups: 12, decals: 110, explosions: 8,
+  // whole point of this version (playability through sheer numbers). Cap raised 10x on top of
+  // the earlier 4x map-area bump; only safe to push this far because the chase AI's separation
+  // check moved off an O(maxZombies) full-pool scan onto ZGrid (a per-frame spatial hash), or
+  // this many pool slots alone would have tanked the frame rate regardless of how many were
+  // actually alive at once. Effect pools below got a much smaller bump -- most (bullets,
+  // particles) cycle fast enough that raw zombie count matters far less than it does for the cap.
+  maxZombies: 6000, bullets: 380, particles: 4400, floaties: 90, pickups: 14, decals: 140, explosions: 10,
   // enemy locator beam (always-on) + the red x-ray silhouette that shows through walls -- see
   // ZG.xrayMat and Zombies.beamMesh
   beamRadius: 0.13, beamHeight: 16,
@@ -2210,6 +2213,26 @@ const ZTYPES = {
   tank: { hpMul: 14, hpWave: 1.09, speedMul: 0.78, scale: 2.0, dmg: 40, radius: 0.95, height: 3.9, reach: 3.1, big: true, lean: 0.02, special: true, boss: true, pts: 14, color: 0x1f1313 }
 };
 const ZG = {};
+// Spatial hash for zombie-vs-zombie separation. Rebuilt fresh every frame (host/singleplayer
+// only -- clients mirror positions via netUpdate and never touch this) from current positions,
+// O(activeZombies). Without it, the chase AI's separation check scanned the ENTIRE static pool
+// (every slot, not just active ones) for every chasing zombie every frame -- O(maxZombies^2) --
+// which is exactly the kind of cost that gets brutal the moment maxZombies grows into the
+// thousands. Cell size (2.5) comfortably covers even the largest pairwise separation range
+// (tank+tank: 0.95+0.95+0.42 ≈ 2.32) within the 3x3 neighborhood a lookup scans.
+const ZGrid = {
+  cell: 2.5, map: new Map(),
+  key(cx, cz) { return cx * 100000 + cz; }, // plain-number Map key -- no string alloc per lookup
+  build(pool) {
+    this.map.clear();
+    for (let i = 0; i < pool.length; i++) {
+      const z = pool[i]; if (!z.on || z.state === 'dead') continue;
+      const k = this.key(Math.floor(z.x / this.cell), Math.floor(z.z / this.cell));
+      let arr = this.map.get(k); if (!arr) { arr = []; this.map.set(k, arr); }
+      arr.push(z);
+    }
+  }
+};
 /* Z version B: every zombie is a low-poly humanoid — one merged torso+head BufferGeometry
    (still a single draw call) plus two separate arm meshes that actually swing when it moves.
    No legs; they added the most draw calls (2 more meshes) for the least readable motion at a
@@ -2419,12 +2442,17 @@ class Zombie {
           if (this.nudgeT > 0) { this.nudgeT -= dt; tx = this.nudgeX; tz = this.nudgeZ; }
           else if (!(d < 26 && World.los(this.x, this.z, P.x, P.z))) { if (World.flowTarget(this.x, this.z, Zombies._tmp)) { tx = Zombies._tmp.x; tz = Zombies._tmp.z; } }
           let ddx = tx - this.x, ddz = tz - this.z; const dl = Math.sqrt(ddx * ddx + ddz * ddz) || 1; ddx /= dl; ddz /= dl;
-          // separation from other zombies
-          let sx = 0, sz = 0; const pool = Zombies.pool;
-          for (let j = 0; j < pool.length; j++) {
-            const o = pool[j]; if (o === this || !o.on || o.state === 'dead') continue;
-            const ox = this.x - o.x, oz = this.z - o.z, rr = this.radius + o.radius + 0.42, d2 = ox * ox + oz * oz;
-            if (d2 < rr * rr && d2 > 1e-6) { const od = Math.sqrt(d2), k = (rr - od) / rr; sx += ox / od * k; sz += oz / od * k; }
+          // separation from other zombies -- only the ~9 grid cells around this one, not the
+          // whole pool (see ZGrid up top: this used to be an O(maxZombies) scan per zombie)
+          let sx = 0, sz = 0;
+          const gcx = Math.floor(this.x / ZGrid.cell), gcz = Math.floor(this.z / ZGrid.cell);
+          for (let gz = -1; gz <= 1; gz++) for (let gx = -1; gx <= 1; gx++) {
+            const arr = ZGrid.map.get(ZGrid.key(gcx + gx, gcz + gz)); if (!arr) continue;
+            for (let ai = 0; ai < arr.length; ai++) {
+              const o = arr[ai]; if (o === this) continue;
+              const ox = this.x - o.x, oz = this.z - o.z, rr = this.radius + o.radius + 0.42, d2 = ox * ox + oz * oz;
+              if (d2 < rr * rr && d2 > 1e-6) { const od = Math.sqrt(d2), k = (rr - od) / rr; sx += ox / od * k; sz += oz / od * k; }
+            }
           }
           const spd = this.speed * (P.alive ? 1 : 0.3);
           const tvx = ddx * spd + sx * 3.4, tvz = ddz * spd + sz * 3.4, k = Math.min(1, dt * 7);
@@ -2605,6 +2633,9 @@ const Zombies = {
   },
   update(dt) {
     const mirror = Net.isClient();
+    // clients mirror positions via netUpdate and never run the chase AI that reads this, so
+    // there's nothing to build it for on their machine
+    if (!mirror) ZGrid.build(this.pool);
     for (const z of this.pool) if (z.on) {
       if (mirror) z.netUpdate(dt); else z.update(dt);
       // parked off-screen the instant a zombie dies -- no lingering beam over a corpse
@@ -3986,12 +4017,10 @@ const Game = {
     Floaties.spawn(x, y, z, '+' + n, color || '#ffffff', size || 16, 0.9);
   },
   waveCount(w) { return Math.round(CFG.countBase * Math.pow(CFG.countMul, w - 1)); },
-  // steeper than the old 6+2w ramp — one-draw-call bodies can actually fill the cap by the
-  // mid-game instead of only theoretically reaching it 30+ waves in
-  // ramp steepened to match maxZombies' 4x jump -- the old +6/wave wouldn't reach the new cap
-  // until wave ~98; this reaches it by wave ~33, matching how much sooner a 4x bigger map can
-  // actually hold that many bodies without them all dogpiling the player from spawn
-  maxAlive(w) { return Math.min(CFG.maxZombies, 20 + w * 18); },
+  // Ramp steepened again alongside maxZombies' 10x jump to 6000 -- +18/wave tops out around
+  // wave 332 at that cap, which nobody would ever see. +180/wave reaches it by wave ~33 instead,
+  // keeping the "cap actually fills mid-game" pacing intent from the last two rounds of scaling.
+  maxAlive(w) { return Math.min(CFG.maxZombies, 30 + w * 180); },
   beginWave() {
     this.wave++; const w = this.wave;
     this.toSpawn = this.waveCount(w); this.waveActive = true; this.spawnT = 0.5;
