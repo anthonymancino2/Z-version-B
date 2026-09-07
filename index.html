@@ -205,6 +205,15 @@ h1.title em{font-style:normal;color:var(--accent2);}
 .opt.on span{color:#ffd83b;text-shadow:0 0 8px rgba(255,216,59,.7);}
 .opt.slider{display:flex;align-items:center;gap:8px;}
 .opt input[type=range]{width:110px;accent-color:var(--accent);}
+/* neon blue and pulsing so it reads as "press this if something looks stale" at a glance, instead
+   of blending into the row of plain option toggles beside it */
+#btnSync, #pBtnSync{border-color:#22d3ff;color:#eafeff;background:rgba(6,30,42,.7);
+  text-shadow:0 0 8px rgba(34,211,255,.9);font-weight:bold;
+  animation:syncPulse 1.6s ease-in-out infinite;}
+@keyframes syncPulse{
+  0%,100%{box-shadow:0 0 8px rgba(34,211,255,.5);}
+  50%{box-shadow:0 0 20px rgba(34,211,255,.95),0 0 34px rgba(34,211,255,.45);}
+}
 .bigbtn{display:inline-block;font-family:var(--hud-font);font-size:clamp(20px,4vw,30px);letter-spacing:.24em;padding:14px 34px;border-radius:10px;border:2px solid var(--accent2);cursor:pointer;
   background:linear-gradient(180deg,var(--accent),var(--accent-dark));color:#fff;text-shadow:0 2px 2px #000;box-shadow:0 0 26px var(--glow),0 8px 18px rgba(0,0,0,.5);touch-action:manipulation;
   transition:transform .1s;}
@@ -503,7 +512,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
         <button class="bigbtn" id="btnStart">ENTER THE ARENA</button>
       </div>
       <div class="row" style="margin-top:10px">
-        <button class="bigbtn secondary" id="btnOnline">PLAY WITH FRIENDS</button>
+        <button class="bigbtn secondary" id="btnOnline">COOP MODE</button>
         <button class="bigbtn secondary" id="btnLeaders">GLOBAL LEADERBOARD</button>
       </div>
       <div class="best" id="bestLine"></div>
@@ -709,7 +718,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.7.1';
+const GAME_VERSION = 'ZB-1.7.2';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
