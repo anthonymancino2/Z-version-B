@@ -640,13 +640,19 @@ const $ = (id) => document.getElementById(id);
 /* ------------------------------------------------------------------ config */
 const GAME_VERSION = 'ZB-1.0.0';
 const CFG = {
-  arenaR: 58,            // playable radius (units)
-  grid: 128, gridMin: -64, cell: 1,
+  // Playable area is 4x the original Z version B map -- same shape, radius doubled (area scales
+  // with r^2, so 2x radius = 4x area). grid/gridMin double to match: the nav grid has to cover
+  // the whole new arena at the same 1-unit resolution, and gridMin must stay -(grid/2) so (0,0)
+  // (the arena center) still lands in the middle of the array.
+  arenaR: 116,           // playable radius (units)
+  grid: 256, gridMin: -128, cell: 1,
   playerR: 0.45, eyeH: 1.62,
   // Z version B: flat-colored one-draw-call zombies are ~4-6x cheaper than the old six-mesh
   // procedural body, so the cap can go up a lot without the frame rate going down — that's the
-  // whole point of this version (playability through sheer numbers).
-  maxZombies: 150, bullets: 160, particles: 2600, floaties: 48, pickups: 8, decals: 64, explosions: 5,
+  // whole point of this version (playability through sheer numbers). Cap scaled 4x along with
+  // the map area; the effect pools below got a more modest bump since most (bullets, particles)
+  // cycle fast enough that raw zombie count matters far less than it does for the cap itself.
+  maxZombies: 600, bullets: 280, particles: 3600, floaties: 72, pickups: 12, decals: 110, explosions: 8,
   zombieBaseHp: 60, zombieBaseSpeed: 2.35, countBase: 6,
   countMul: 1.25, speedMul: 1.05, hpMul: 1.15,
   ptsHit: 10, ptsKill: 100, ptsHead: 25,
@@ -1585,18 +1591,21 @@ const World = {
     const N = this.N;
     this.grid = new Uint8Array(N * N); this.dist = new Uint16Array(N * N); this.queue = new Int32Array(N * N);
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3(1, 1, 1); this._e = new THREE.Euler();
-    // instanced meshes (fixed capacity, count adjusted per match)
+    // instanced meshes (fixed capacity, count adjusted per match) -- capacities scaled up with
+    // the 4x map area so prop density (walls/crates/barrels/rocks per square unit) stays roughly
+    // where it was instead of the bigger arena reading as empty. The perimeter fence posts scale
+    // with circumference instead (2x, not 4x) since that's a 1D loop around the arena, not an area.
     TEX.adobe.anisotropy = R.maxAniso; TEX.crate.anisotropy = R.maxAniso;
     const wallGeo = new THREE.BoxGeometry(5, 2.2, 0.9); wallGeo.translate(0, 1.1, 0);
-    this.wallMesh = new THREE.InstancedMesh(wallGeo, new THREE.MeshLambertMaterial({ map: TEX.adobe, color: 0xdcb489 }), 64);
+    this.wallMesh = new THREE.InstancedMesh(wallGeo, new THREE.MeshLambertMaterial({ map: TEX.adobe, color: 0xdcb489 }), 240);
     const crateGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6); crateGeo.translate(0, 0.8, 0);
-    this.crateMesh = new THREE.InstancedMesh(crateGeo, new THREE.MeshLambertMaterial({ map: TEX.crate, color: 0xd8b891 }), 64);
+    this.crateMesh = new THREE.InstancedMesh(crateGeo, new THREE.MeshLambertMaterial({ map: TEX.crate, color: 0xd8b891 }), 240);
     const barrelGeo = new THREE.CylinderGeometry(0.52, 0.52, 1.25, 12, 1); barrelGeo.translate(0, 0.625, 0);
-    this.barrelMesh = new THREE.InstancedMesh(barrelGeo, new THREE.MeshLambertMaterial({ map: TEX.barrel, color: 0xffd8c0 }), 24);
+    this.barrelMesh = new THREE.InstancedMesh(barrelGeo, new THREE.MeshLambertMaterial({ map: TEX.barrel, color: 0xffd8c0 }), 90);
     const rockGeo = new THREE.DodecahedronGeometry(1, 0); rockGeo.scale(1, 0.62, 1);
-    this.rockMesh = new THREE.InstancedMesh(rockGeo, new THREE.MeshLambertMaterial({ color: 0x8d6c4c }), 90);
+    this.rockMesh = new THREE.InstancedMesh(rockGeo, new THREE.MeshLambertMaterial({ color: 0x8d6c4c }), 340);
     const postGeo = new THREE.BoxGeometry(0.16, 1.5, 0.16); postGeo.translate(0, 0.75, 0);
-    this.postMesh = new THREE.InstancedMesh(postGeo, new THREE.MeshLambertMaterial({ color: 0x3a2412 }), 72);
+    this.postMesh = new THREE.InstancedMesh(postGeo, new THREE.MeshLambertMaterial({ color: 0x3a2412 }), 144);
     [this.wallMesh, this.crateMesh, this.barrelMesh, this.rockMesh, this.postMesh].forEach(m => { m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.frustumCulled = false; R.scene.add(m); });
     // per-instance tint keeps the modular walls/crates/rocks from reading as one repeated tile
     this._tint = new THREE.Color();
@@ -1604,12 +1613,14 @@ const World = {
       for (let i = 0; i < m.instanceMatrix.count; i++) m.setColorAt(i, this._tint.setRGB(1, 1, 1));
       if (m.instanceColor) m.instanceColor.setUsage(THREE.DynamicDrawUsage);
     });
-    // boundary wire (two line loops strung between the posts)
-    const mkLoop = (hh) => { const a = []; for (let i = 0; i < 72; i++) { const an = i / 72 * TAU; a.push(Math.cos(an) * (CFG.arenaR + 0.6), hh, Math.sin(an) * (CFG.arenaR + 0.6)); } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a1a0c })); };
+    // boundary wire (two line loops strung between the posts) -- post count matches
+    // postMesh's capacity so each post lands on a wire vertex
+    const NPOST = this.postMesh.instanceMatrix.count;
+    const mkLoop = (hh) => { const a = []; for (let i = 0; i < NPOST; i++) { const an = i / NPOST * TAU; a.push(Math.cos(an) * (CFG.arenaR + 0.6), hh, Math.sin(an) * (CFG.arenaR + 0.6)); } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a1a0c })); };
     this.wire = new THREE.Group(); this.wire.add(mkLoop(0.95)); this.wire.add(mkLoop(1.35)); R.scene.add(this.wire);
     // posts
-    for (let i = 0; i < 72; i++) { const a = i / 72 * TAU; this.setInst(this.postMesh, i, Math.cos(a) * (CFG.arenaR + 0.6), 0, Math.sin(a) * (CFG.arenaR + 0.6), a, 1, 1); }
-    this.postMesh.count = 72; this.postMesh.instanceMatrix.needsUpdate = true;
+    for (let i = 0; i < NPOST; i++) { const a = i / NPOST * TAU; this.setInst(this.postMesh, i, Math.cos(a) * (CFG.arenaR + 0.6), 0, Math.sin(a) * (CFG.arenaR + 0.6), a, 1, 1); }
+    this.postMesh.count = NPOST; this.postMesh.instanceMatrix.needsUpdate = true;
   },
   setInst(mesh, i, x, y, z, yaw, sy, sxz, tint) {
     this._p.set(x, y, z); this._e.set(0, yaw, 0); this._q.setFromEuler(this._e); this._s.set(sxz, sy, sxz);
@@ -1624,8 +1635,10 @@ const World = {
     if (cx < 0 || cz < 0 || cx >= N || cz >= N) return -1;
     return cz * N + cx;
   },
-  cellCenterX(i) { return CFG.gridMin + (i & 127) + 0.5; },
-  cellCenterZ(i) { return CFG.gridMin + (i >> 7) + 0.5; },
+  // N was hardcoded as 128 here (via `& 127`/`>> 7`, a power-of-two bit trick) until the map grew
+  // to a 256-wide grid; % and / work for any N so a future resize can't silently break this again
+  cellCenterX(i) { return CFG.gridMin + (i % this.N) + 0.5; },
+  cellCenterZ(i) { return CFG.gridMin + Math.floor(i / this.N) + 0.5; },
   isBlocked(x, z) { const i = this.cellIndex(x, z); return i < 0 || this.grid[i] === 1; },
 
   generate(seed) {
@@ -1635,8 +1648,10 @@ const World = {
     const RA = CFG.arenaR;
     let wi = 0, ci = 0;
     // ---- adobe walls (straight + L-shaped), axis aligned
-    const nStruct = 8 + Math.floor(rng() * 3);
-    for (let n = 0, tries = 0; n < nStruct && tries < 400; tries++) {
+    // counts scaled 4x with the map area (RA already reads the new CFG.arenaR, so the
+    // placement-radius ranges below spread these across the bigger arena on their own)
+    const nStruct = 32 + Math.floor(rng() * 12);
+    for (let n = 0, tries = 0; n < nStruct && tries < 1600; tries++) {
       const r = 11 + rng() * (RA - 24), a = rng() * TAU, cx = Math.round(Math.cos(a) * r), cz = Math.round(Math.sin(a) * r);
       let ok = true; for (const s of S) if (Math.abs(s.x - cx) < 13 && Math.abs(s.z - cz) < 13) { ok = false; break; }
       if (!ok) continue;
@@ -1650,7 +1665,7 @@ const World = {
         for (let i = 0; i < nseg; i++) { const off = (i - (nseg - 1) / 2) * 5; segs.push(vert ? { x: cx, z: cz + off, yaw: Math.PI / 2 } : { x: cx + off, z: cz, yaw: 0 }); }
       }
       for (const sg of segs) {
-        if (wi >= 64) break;
+        if (wi >= 240) break;
         this.setInst(this.wallMesh, wi++, sg.x, 0, sg.z, sg.yaw, h / 2.2, 1, srnd(0.82, 1.12));
         const hx = sg.yaw === 0 ? 2.5 : 0.45, hz = sg.yaw === 0 ? 0.45 : 2.5;
         boxes.push({ x0: sg.x - hx, x1: sg.x + hx, z0: sg.z - hz, z1: sg.z + hz, h: h, kind: 1 });
@@ -1659,8 +1674,8 @@ const World = {
     }
     this.wallMesh.count = wi; this.wallMesh.instanceMatrix.needsUpdate = true;
     // ---- crate clusters
-    const nClus = 9 + Math.floor(rng() * 4);
-    for (let n = 0, tries = 0; n < nClus && tries < 500; tries++) {
+    const nClus = 36 + Math.floor(rng() * 16);
+    for (let n = 0, tries = 0; n < nClus && tries < 2000; tries++) {
       const r = 7 + rng() * (RA - 13), a = rng() * TAU, cx = Math.cos(a) * r, cz = Math.sin(a) * r;
       if (!this.freeSpot(cx, cz, 2.2)) continue;
       let ok = true; for (const c of C) if (Math.abs(c.x - cx) < 6 && Math.abs(c.z - cz) < 6) { ok = false; break; }
@@ -1668,24 +1683,24 @@ const World = {
       const cnt = 1 + Math.floor(rng() * 3), dirx = rng() < 0.5 ? 1 : 0, cl = { x: cx, z: cz, crates: [] };
       for (let i = 0; i < cnt; i++) {
         const x = cx + (dirx ? i * 1.75 : 0) + (i ? srnd(-.08, .08) : 0), z = cz + (dirx ? 0 : i * 1.75);
-        if (ci >= 60) break;
+        if (ci >= 240) break;
         if (i > 0 && !this.freeSpot(x, z, 1.0)) continue;
         const yaw = srnd(-0.14, 0.14);
         this.setInst(this.crateMesh, ci++, x, 0, z, yaw, 1, 1, srnd(0.78, 1.14));
         boxes.push({ x0: x - 0.88, x1: x + 0.88, z0: z - 0.88, z1: z + 0.88, h: 1.6, kind: 2 });
         cl.crates.push({ x: x, z: z });
-        if (i === 0 && rng() < 0.4 && ci < 60) { this.setInst(this.crateMesh, ci++, x + srnd(-.1, .1), 1.6, z + srnd(-.1, .1), yaw + srnd(-.3, .3), 1, 1, srnd(0.78, 1.14)); boxes[boxes.length - 1].h = 3.2; }
+        if (i === 0 && rng() < 0.4 && ci < 240) { this.setInst(this.crateMesh, ci++, x + srnd(-.1, .1), 1.6, z + srnd(-.1, .1), yaw + srnd(-.3, .3), 1, 1, srnd(0.78, 1.14)); boxes[boxes.length - 1].h = 3.2; }
       }
       C.push(cl); n++;
     }
     this.crateMesh.count = ci; this.crateMesh.instanceMatrix.needsUpdate = true;
     // ---- explosive barrels
-    const nBar = 9 + Math.floor(rng() * 4);
+    const nBar = 36 + Math.floor(rng() * 16);
     for (let n = 0; n < nBar; n++) { const p = this.findBarrelSpot(); if (!p) break; barrels.push({ x: p.x, z: p.z, r: 0.55, h: 1.25, alive: true, idx: n }); this.setInst(this.barrelMesh, n, p.x, 0, p.z, rng() * TAU, 1, 1); }
     this.barrelMesh.count = barrels.length; this.barrelMesh.instanceMatrix.needsUpdate = true;
     // ---- rocks (decorative)
     let ri = 0;
-    for (let n = 0; n < 90; n++) {
+    for (let n = 0; n < 340; n++) {
       const r = 4 + rng() * (RA + 30), a = rng() * TAU, x = Math.cos(a) * r, z = Math.sin(a) * r;
       if (r < RA && !this.freeSpot(x, z, 1.4)) continue;
       const s = r > RA ? srnd(0.5, 2.2) : srnd(0.18, 0.55);
@@ -1750,7 +1765,7 @@ const World = {
     const d = this.dist, q = this.queue; d.fill(65535);
     const s = this.cellIndex(0, 0); let head = 0, tail = 0; d[s] = 0; q[tail++] = s;
     while (head < tail) {
-      const i = q[head++], x = i & 127, y = i >> 7;
+      const i = q[head++], x = i % N, y = Math.floor(i / N);
       if (x > 0 && !g[i - 1] && d[i - 1] === 65535) { d[i - 1] = 1; q[tail++] = i - 1; }
       if (x < N - 1 && !g[i + 1] && d[i + 1] === 65535) { d[i + 1] = 1; q[tail++] = i + 1; }
       if (y > 0 && !g[i - N] && d[i - N] === 65535) { d[i - N] = 1; q[tail++] = i - N; }
@@ -1765,7 +1780,7 @@ const World = {
     const s = this.cellIndex(px, pz); if (s < 0) return;
     let head = 0, tail = 0; d[s] = 0; q[tail++] = s;
     while (head < tail) {
-      const i = q[head++], nd = d[i] + 1, x = i & 127, y = i >> 7;
+      const i = q[head++], nd = d[i] + 1, x = i % N, y = Math.floor(i / N);
       if (x > 0 && !g[i - 1] && d[i - 1] === 65535) { d[i - 1] = nd; q[tail++] = i - 1; }
       if (x < N - 1 && !g[i + 1] && d[i + 1] === 65535) { d[i + 1] = nd; q[tail++] = i + 1; }
       if (y > 0 && !g[i - N] && d[i - N] === 65535) { d[i - N] = nd; q[tail++] = i - N; }
@@ -1783,7 +1798,7 @@ const World = {
     const N = this.N, i = this.cellIndex(x, z); if (i < 0) return false;
     const d = this.dist, g = this.grid;
     let best = d[i], bj = -1;
-    const cx = i & 127, cy = i >> 7;
+    const cx = i % N, cy = Math.floor(i / N);
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue;
       const nx = cx + dx, ny = cy + dy; if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
@@ -3895,7 +3910,10 @@ const Game = {
   waveCount(w) { return Math.round(CFG.countBase * Math.pow(CFG.countMul, w - 1)); },
   // steeper than the old 6+2w ramp — one-draw-call bodies can actually fill the cap by the
   // mid-game instead of only theoretically reaching it 30+ waves in
-  maxAlive(w) { return Math.min(CFG.maxZombies, 10 + w * 6); },
+  // ramp steepened to match maxZombies' 4x jump -- the old +6/wave wouldn't reach the new cap
+  // until wave ~98; this reaches it by wave ~33, matching how much sooner a 4x bigger map can
+  // actually hold that many bodies without them all dogpiling the player from spawn
+  maxAlive(w) { return Math.min(CFG.maxZombies, 20 + w * 18); },
   beginWave() {
     this.wave++; const w = this.wave;
     this.toSpawn = this.waveCount(w); this.waveActive = true; this.spawnT = 0.5;
