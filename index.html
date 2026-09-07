@@ -709,7 +709,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.7.0';
+const GAME_VERSION = 'ZB-1.7.1';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -2556,8 +2556,16 @@ class Zombie {
     // in coop the host runs every zombie, so each one chases whichever survivor is closest
     const T = this.type, st = this.state;
     // ...except a hunter mid-leap or mid-ride, which stays with the survivor it committed to
+    // A non-host client still runs this same update() locally every frame (snapshots only correct
+    // it ~12x/sec, so local sim is what keeps movement smooth in between) with P defaulting to its
+    // own Player -- Net.targetFor's afk/coopMenu exclusion only runs on the host, so without this
+    // fallback a paused client would keep locally deciding "a zombie is in range of me, attack",
+    // and calling P.hurt() on itself, regardless of what the host actually excluded it from. Using
+    // a dead (alive:false) stand-in here instead of Player makes every P.alive-gated branch below
+    // (attack, pounce, the direct hurt() call) a no-op for the client's own paused body, the same
+    // way targetFor keeps the host from ever picking it in the first place.
     let P = (this.pinTarget && (st === 'crouch' || st === 'pounce' || st === 'pin')) ? this.pinTarget
-      : (Net.isHost() ? Net.targetFor(this) : (Bots.on ? Bots.targetFor(this) : Player));
+      : (Net.isHost() ? Net.targetFor(this) : (Bots.on ? Bots.targetFor(this) : (Game.coopMenu ? Zombies._hiddenSelf(Player.x, Player.z) : Player)));
     if (this.flashT > 0) { this.flashT -= dt; if (this.flashT <= 0) { this.mat.emissive.setHex(0); } }
     if (st === 'emerge') {
       this.t += dt; const k = Math.min(1, this.t / 1.1); this.y = -2.4 + 2.4 * easeOut(k);
@@ -2731,6 +2739,10 @@ class Zombie {
 }
 const Zombies = {
   pool: [], _tmp: { x: 0, z: 0 }, _sp: { x: 0, z: 0 },
+  _hiddenObj: { x: 0, z: 0, alive: false, pinnedBy: null },
+  // a reusable stand-in for "no valid target" (see the P assignment in Zombie.update) -- kept
+  // alive:false so every P.alive-gated branch treats it as a no-op without a fresh alloc/frame/zombie
+  _hiddenSelf(x, z) { const o = this._hiddenObj; o.x = x; o.z = z; return o; },
   init() {
     buildZombieGeometries(); for (let i = 0; i < CFG.maxZombies; i++) this.pool.push(new Zombie(i));
     // one instanced mesh for every zombie's locator beam -- a single draw call no matter how many
