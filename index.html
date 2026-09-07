@@ -221,9 +221,20 @@ h1.title em{font-style:normal;color:var(--accent2);}
 #loadErr{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#1a0f08;color:#fff;text-align:center;padding:20px;font-family:var(--body-font);z-index:50;}
 #loadErr.show{display:flex;}
 #loadErr h3{font-family:var(--hud-font);letter-spacing:.2em;font-weight:normal;font-size:24px;color:var(--accent2);}
-#rotateHint{position:absolute;left:50%;bottom:calc(10px + var(--sab));transform:translateX(-50%);font-family:var(--hud-font);font-size:11px;letter-spacing:.16em;color:var(--sand);
-  pointer-events:none;white-space:nowrap;background:rgba(12,6,3,.9);border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:6px 14px;}
-#rotateHint:empty{display:none;}
+/* Landscape-only gate: a real device rotation can't be forced from a web page (no OS-level
+   permission for that), so this is the actual mechanism -- a full-screen block that makes
+   portrait simply unplayable, with input blocked underneath. boot() also best-effort tries
+   screen.orientation.lock('landscape') on the first tap, which works on some Android/Chrome
+   contexts, but this overlay is what guarantees the "no portrait mode" behavior everywhere else
+   (notably iOS Safari, which has no orientation-lock API at all). Desktop is exempt (see the
+   ontouchstart check in updateRotateHint) -- a narrow browser window isn't "portrait mode". */
+#portraitBlock{display:none;position:fixed;inset:0;z-index:9999;background:#0d0704;color:#fff;
+  flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;font-family:var(--body-font);}
+#portraitBlock.show{display:flex;}
+#portraitBlock .picon{font-size:56px;margin-bottom:14px;animation:pbspin 1.6s ease-in-out infinite;}
+#portraitBlock h2{font-family:var(--hud-font);font-weight:normal;letter-spacing:.14em;font-size:22px;color:var(--accent2);margin:0 0 8px;}
+#portraitBlock p{color:var(--dim);font-size:14px;max-width:280px;margin:0;}
+@keyframes pbspin{0%,100%{transform:rotate(-92deg);}50%{transform:rotate(0deg);}}
 #menu .scroll{padding-bottom:calc(52px + var(--sab));}
 @media (max-height:420px){
   h1.title{font-size:clamp(34px,8vw,64px);} .tag{margin-bottom:8px;} .cards{margin:4px 0 8px;} .card canvas,.cportrait{width:56px;height:56px;font-size:22px;} .cdesc{display:none;}
@@ -463,7 +474,6 @@ h1.title em{font-style:normal;color:var(--accent2);}
       </div>
       <div class="help" id="verLine" style="opacity:.5"></div>
     </div></div>
-    <div id="rotateHint"></div>
   </div>
 
   <!-- Pause -->
@@ -572,6 +582,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
       <p>The Three.js library could not be fetched. Check your connection and try again.</p>
       <button class="bigbtn" onclick="location.reload()">RETRY</button></div>
   </div>
+  <div id="portraitBlock"><div class="picon">⟳</div><h2>ROTATE YOUR DEVICE</h2><p>DUST &amp; DEAD IS LANDSCAPE ONLY</p></div>
 </div>
 
 <script>
@@ -3267,7 +3278,7 @@ const HUD = {
   dirty: true, last: {}, toastT: 0, subT: 0, bannerT: 0,
   init() {
     ['hud', 'controls', 'menu', 'pause', 'gameover', 'hpLabel', 'hpFill', 'hpNum', 'waveNum', 'zLeft', 'powerups', 'pillInsta', 'pillDbl', 'points', 'mult', 'kills', 'ammoMag', 'ammoRes', 'wpnName', 'reloadHint',
-      'subtitle', 'subName', 'subText', 'banner', 'bannerTitle', 'bannerSub', 'toast', 'fpsTag', 'muzzle', 'dmg', 'lowhp', 'flashwhite', 'btnAuto', 'autoState', 'btnView', 'viewState', 'btnSprint', 'joyHint', 'rotateHint',
+      'subtitle', 'subName', 'subText', 'banner', 'bannerTitle', 'bannerSub', 'toast', 'fpsTag', 'muzzle', 'dmg', 'lowhp', 'flashwhite', 'btnAuto', 'autoState', 'btnView', 'viewState', 'btnSprint', 'joyHint', 'portraitBlock',
       'goWave', 'goPoints', 'goKills', 'goAcc', 'goHead', 'goTime', 'goBest', 'goTag', 'bestLine', 'optAuto', 'optVoice', 'optSound', 'optSens', 'sensVal', 'pOptAuto', 'pOptVoice', 'pOptSound', 'pOptSens', 'pSensVal', 'optCam', 'pOptCam', 'optSquad', 'pOptSquad', 'loadErr',
       'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
       'btnLeaders', 'btnLeadersBack', 'btnLobbyStart', 'btnLobbyLeave', 'lobbyCode', 'lobbyPlayers', 'lobbyStatus', 'lobbyHint',
@@ -3858,6 +3869,15 @@ const Game = {
     const self = this;
     const unlockAudio = function () { Audio.unlock(); if (Audio.ready) { ['touchstart', 'touchend', 'mousedown', 'keydown', 'click'].forEach(ev => document.removeEventListener(ev, unlockAudio)); } };
     ['touchstart', 'touchend', 'mousedown', 'keydown', 'click'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
+    // Best-effort real orientation lock -- only works in some Android/Chrome contexts and needs a
+    // user gesture (and often fullscreen) to succeed, so this can't be the actual guarantee.
+    // #portraitBlock (see updateRotateHint) is what makes "no portrait mode" true everywhere,
+    // including iOS Safari, which has no orientation-lock API at all.
+    const tryLockLandscape = function () {
+      try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => { }); } catch (e) { }
+    };
+    document.addEventListener('touchstart', tryLockLandscape, { passive: true, once: true });
+    document.addEventListener('click', tryLockLandscape, { passive: true, once: true });
     Input.on.any = function () { if (!Audio.ready) Audio.unlock(); else Audio.resume(); };
     Input.on.reload = function () { if (self.state === 'playing') Player.reload(); };
     Input.on.swap = function () { if (self.state === 'playing') Player.swap(); };
@@ -3889,12 +3909,20 @@ const Game = {
     document.addEventListener('visibilitychange', () => { if (document.hidden) { if (self.state === 'playing' && !Net.on()) self.pause(); } else Audio.resume(); });
     window.addEventListener('pagehide', () => { if (self.state === 'playing' && !Net.on()) self.pause(); });
     this.updateRotateHint(); window.addEventListener('resize', () => self.updateRotateHint());
+    window.addEventListener('orientationchange', () => setTimeout(() => self.updateRotateHint(), 140));
     World.generate(Math.floor(Math.random() * 1e9));
     this.selectChar('blue');
     Net.init(); Board.init(); Mqtt.start();
     const ver = $('verLine'); if (ver) ver.textContent = 'DUST & DEAD ' + GAME_VERSION;
   },
-  updateRotateHint() { const portrait = window.innerHeight > window.innerWidth && ('ontouchstart' in window); DOM.rotateHint.textContent = portrait ? 'ROTATE TO LANDSCAPE FOR THE BEST EXPERIENCE' : ''; },
+  // Blocks portrait outright (see #portraitBlock's comment) rather than just hinting at it.
+  // Desktop is exempt -- a narrow/tall browser window is not "portrait mode" the way a rotated
+  // phone is, and there'd be no way to "rotate" a desktop window back into compliance anyway.
+  updateRotateHint() {
+    const portrait = window.innerHeight > window.innerWidth && ('ontouchstart' in window);
+    DOM.portraitBlock.classList.toggle('show', portrait);
+    if (portrait && this.state === 'playing') this.pause();
+  },
   setCamMode(mode) {
     this.camMode = CAM_MODES.indexOf(mode) >= 0 ? mode : 'fp';
     try { localStorage.setItem('dnd_cam', this.camMode); } catch (e) { }
