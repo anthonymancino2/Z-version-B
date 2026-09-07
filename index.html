@@ -2271,7 +2271,15 @@ class Zombie {
     Particles.emergeDust(x, z, T.scale); Audio.emerge(x, z);
     if (T.boss) Audio.roar(x, z);
   }
-  deactivate() { this.endPin(); this.on = false; this.state = 'dead'; this.group.visible = false; this.shadow.visible = false; }
+  deactivate() {
+    this.endPin(); this.on = false; this.state = 'dead'; this.group.visible = false; this.shadow.visible = false;
+    // Zombies.update()'s own per-frame hide-on-death only fires while a zombie is still `on` --
+    // any deactivate() reached another way (Zombies.clear() on a match restart/quit catches
+    // zombies mid-death-animation) would otherwise skip it forever and strand a lit beam in the
+    // NEXT match, since the beam mesh persists across matches. This is the one place guaranteed
+    // to run no matter how deactivate() was reached.
+    if (Zombies.beamMesh) { World.setInst(Zombies.beamMesh, this.idx, 0, -50, 0, 0, 0.001, 0.001); Zombies.beamMesh.instanceMatrix.needsUpdate = true; }
+  }
   /* ---- hunter: coil, leap, ride ----
      The target is locked in at the coil, not re-picked every frame, so a leap that is already in
      the air stays committed to the survivor it was aimed at. */
