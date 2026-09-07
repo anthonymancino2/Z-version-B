@@ -656,14 +656,22 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.0.0';
+const GAME_VERSION = 'ZB-1.1.0';
 const CFG = {
-  // Playable area is 4x the original Z version B map -- same shape, radius doubled (area scales
-  // with r^2, so 2x radius = 4x area). grid/gridMin double to match: the nav grid has to cover
-  // the whole new arena at the same 1-unit resolution, and gridMin must stay -(grid/2) so (0,0)
-  // (the arena center) still lands in the middle of the array.
-  arenaR: 116,           // playable radius (units)
-  grid: 256, gridMin: -128, cell: 1,
+  // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
+  // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
+  // The live fence (World.boundR) now grows OUT of arenaR0 as the run goes on: every arenaGrowRounds
+  // rounds it steps up, reaching arenaAreaMaxMul x the round-1 AREA by arenaGrowCapRound, then holds
+  // there for good. arenaR itself becomes the max extent (arenaR0 * sqrt(arenaAreaMaxMul)) -- world
+  // generation scatters props across that whole eventual footprint up front (see World.generate),
+  // and grid/gridMin size the nav grid to cover it, so growing the fence later is just moving the
+  // boundary outward into terrain that's already there, never a live regeneration.
+  arenaR0: 58,             // original playable radius -- what round 1 (and every fresh match) starts at
+  arenaAreaMaxMul: 5,      // by arenaGrowCapRound the playable AREA is 5x the round-1 area
+  arenaGrowRounds: 5,      // the fence (and the zombie cap below) step up every 5th round
+  arenaGrowCapRound: 30,   // the fence stops growing once this round is reached
+  arenaR: 129.7,           // = arenaR0 * sqrt(arenaAreaMaxMul) -- max terrain extent / grid coverage
+  grid: 264, gridMin: -132, cell: 1,
   playerR: 0.45, eyeH: 1.62,
   // Z version B: flat-colored one-draw-call zombies are ~4-6x cheaper than the old six-mesh
   // procedural body, so the cap can go up a lot without the frame rate going down — that's the
@@ -679,6 +687,12 @@ const CFG = {
   beamRadius: 0.13, beamHeight: 16,
   zombieBaseHp: 60, zombieBaseSpeed: 2.35, countBase: 6,
   countMul: 1.25, speedMul: 1.05, hpMul: 1.15,
+  // concurrent on-map zombie cap: same round-1 value the old flat "30 + w*180" formula gave (so
+  // round 1 pacing doesn't change -- it just reads denser now on the smaller arenaR0 map), climbing
+  // to 10x that by arenaGrowCapRound in step with the fence, then continuing to climb at the same
+  // per-arenaGrowRounds rate forever after -- maxZombies above is the real, perf-tuned hard ceiling
+  // once the ramp gets that far (see Game.maxAlive).
+  enemyAliveBase: 210, enemyAliveMaxMul: 10,
   ptsHit: 10, ptsKill: 100, ptsHead: 25,
   instaTime: 15, dblTime: 30,
   // later-wave power-ups: squad-wide buffs, same model as insta/double -- one pickup arms it for
@@ -1615,16 +1629,19 @@ const World = {
   boxes: [], barrels: [], structures: [], clusters: [],
   wallMesh: null, crateMesh: null, barrelMesh: null, rockMesh: null, postMesh: null, wire: null,
   grid: null, dist: null, queue: null, N: CFG.grid,
+  // the LIVE fence radius -- starts at arenaR0 and grows toward CFG.arenaR (the max terrain
+  // extent generate() actually scatters props across) as rounds progress; see setBoundary()
+  boundR: CFG.arenaR0,
   flowX: 1e9, flowZ: 1e9, flowTimer: 0, seed: 1,
   _m: null, _q: null, _p: null, _s: null, _e: null,
   init() {
     const N = this.N;
     this.grid = new Uint8Array(N * N); this.dist = new Uint16Array(N * N); this.queue = new Int32Array(N * N);
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3(1, 1, 1); this._e = new THREE.Euler();
-    // instanced meshes (fixed capacity, count adjusted per match) -- capacities scaled up with
-    // the 4x map area so prop density (walls/crates/barrels/rocks per square unit) stays roughly
-    // where it was instead of the bigger arena reading as empty. The perimeter fence posts scale
-    // with circumference instead (2x, not 4x) since that's a 1D loop around the arena, not an area.
+    // instanced meshes (fixed capacity, count adjusted per match) -- capacities sized for the max
+    // (round-30) map extent so prop density (walls/crates/barrels/rocks per square unit) holds up
+    // once the fence grows into terrain that's already there. The perimeter fence posts scale
+    // with circumference instead of area since that's a 1D loop around the (eventual) arena.
     TEX.adobe.anisotropy = R.maxAniso; TEX.crate.anisotropy = R.maxAniso;
     const wallGeo = new THREE.BoxGeometry(5, 2.2, 0.9); wallGeo.translate(0, 1.1, 0);
     this.wallMesh = new THREE.InstancedMesh(wallGeo, new THREE.MeshLambertMaterial({ map: TEX.adobe, color: 0xdcb489 }), 240);
@@ -1644,13 +1661,31 @@ const World = {
       if (m.instanceColor) m.instanceColor.setUsage(THREE.DynamicDrawUsage);
     });
     // boundary wire (two line loops strung between the posts) -- post count matches
-    // postMesh's capacity so each post lands on a wire vertex
-    const NPOST = this.postMesh.instanceMatrix.count;
-    const mkLoop = (hh) => { const a = []; for (let i = 0; i < NPOST; i++) { const an = i / NPOST * TAU; a.push(Math.cos(an) * (CFG.arenaR + 0.6), hh, Math.sin(an) * (CFG.arenaR + 0.6)); } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a1a0c })); };
+    // postMesh's capacity so each post lands on a wire vertex. Built at the LIVE boundR (round-1
+    // size by default), not the max CFG.arenaR -- setBoundary() moves both outward later.
+    const NPOST = this.postMesh.instanceMatrix.count, br = this.boundR;
+    const mkLoop = (hh) => { const a = []; for (let i = 0; i < NPOST; i++) { const an = i / NPOST * TAU; a.push(Math.cos(an) * (br + 0.6), hh, Math.sin(an) * (br + 0.6)); } const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3)); return new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a1a0c })); };
     this.wire = new THREE.Group(); this.wire.add(mkLoop(0.95)); this.wire.add(mkLoop(1.35)); R.scene.add(this.wire);
     // posts
-    for (let i = 0; i < NPOST; i++) { const a = i / NPOST * TAU; this.setInst(this.postMesh, i, Math.cos(a) * (CFG.arenaR + 0.6), 0, Math.sin(a) * (CFG.arenaR + 0.6), a, 1, 1); }
+    for (let i = 0; i < NPOST; i++) { const a = i / NPOST * TAU; this.setInst(this.postMesh, i, Math.cos(a) * (br + 0.6), 0, Math.sin(a) * (br + 0.6), a, 1, 1); }
     this.postMesh.count = NPOST; this.postMesh.instanceMatrix.needsUpdate = true;
+  },
+  // moves the live fence (posts + wire) out to radius r, marks the grid outside it as blocked,
+  // and remembers r as boundR -- called on every wave that crosses a growth step (see Game.beginWave)
+  // and once at match start to reset back to arenaR0. Never touches World.generate()'s terrain --
+  // the whole eventual (round-30) map already exists, this just moves the boundary into it.
+  setBoundary(r) {
+    this.boundR = r;
+    const NPOST = this.postMesh.instanceMatrix.count;
+    for (let i = 0; i < NPOST; i++) { const a = i / NPOST * TAU; this.setInst(this.postMesh, i, Math.cos(a) * (r + 0.6), 0, Math.sin(a) * (r + 0.6), a, 1, 1); }
+    this.postMesh.instanceMatrix.needsUpdate = true;
+    for (const loop of this.wire.children) {
+      const pos = loop.geometry.attributes.position;
+      for (let i = 0; i < NPOST; i++) { const a = i / NPOST * TAU; pos.setX(i, Math.cos(a) * (r + 0.6)); pos.setZ(i, Math.sin(a) * (r + 0.6)); }
+      pos.needsUpdate = true;
+    }
+    this.rebuildGrid();
+    this.flowX = 1e9; this.flowZ = 1e9;
   },
   setInst(mesh, i, x, y, z, yaw, sy, sxz, tint) {
     this._p.set(x, y, z); this._e.set(0, yaw, 0); this._q.setFromEuler(this._e); this._s.set(sxz, sy, sxz);
@@ -1675,11 +1710,14 @@ const World = {
     this.seed = seed; rng = mulberry32(seed);
     const boxes = this.boxes, barrels = this.barrels, S = this.structures, C = this.clusters;
     boxes.length = 0; barrels.length = 0; S.length = 0; C.length = 0;
+    // RA is the MAX (round-30) extent, not the live fence -- this scatters props across the whole
+    // eventual map up front, once per match, so growing the live boundary later (World.boundR, see
+    // setBoundary) just reveals terrain that's already there instead of regenerating anything.
     const RA = CFG.arenaR;
     let wi = 0, ci = 0;
     // ---- adobe walls (straight + L-shaped), axis aligned
-    // counts scaled 4x with the map area (RA already reads the new CFG.arenaR, so the
-    // placement-radius ranges below spread these across the bigger arena on their own)
+    // counts sized for the full max-extent map (RA); the placement-radius ranges below spread
+    // these across the whole thing on their own
     const nStruct = 32 + Math.floor(rng() * 12);
     for (let n = 0, tries = 0; n < nStruct && tries < 1600; tries++) {
       const r = 11 + rng() * (RA - 24), a = rng() * TAU, cx = Math.round(Math.cos(a) * r), cz = Math.round(Math.sin(a) * r);
@@ -1768,7 +1806,9 @@ const World = {
     this.rebuildGrid(); this.flowX = 1e9;
   },
   rebuildGrid() {
-    const N = this.N, g = this.grid, R2 = (CFG.arenaR - 0.7) * (CFG.arenaR - 0.7);
+    // blocks off everything beyond the LIVE fence (boundR), not the max terrain extent -- players/
+    // zombies/pathing stay inside the current boundary even though the props out past it already exist
+    const N = this.N, g = this.grid, R2 = (this.boundR - 0.7) * (this.boundR - 0.7);
     for (let cz = 0; cz < N; cz++) for (let cx = 0; cx < N; cx++) {
       const wx = CFG.gridMin + cx + 0.5, wz = CFG.gridMin + cz + 0.5;
       g[cz * N + cx] = (wx * wx + wz * wz > R2) ? 1 : 0;
@@ -1848,7 +1888,7 @@ const World = {
   // circle vs world push-out (boundary, boxes, barrels). o = {x,z}
   collide(o, r) {
     let hit = false;
-    const dd = Math.sqrt(o.x * o.x + o.z * o.z), maxR = CFG.arenaR - r;
+    const dd = Math.sqrt(o.x * o.x + o.z * o.z), maxR = this.boundR - r;
     if (dd > maxR) { const k = maxR / dd; o.x *= k; o.z *= k; hit = true; }
     const boxes = this.boxes;
     for (let i = 0; i < boxes.length; i++) {
@@ -1917,7 +1957,7 @@ const World = {
       if (list.length && Math.random() < 0.8) {
         const b = list[Math.floor(Math.random() * list.length)], side = Math.floor(Math.random() * 4), d = 1.3 + Math.random() * 1.4;
         if (side === 0) { x = b.x0 - d; z = rnd(b.z0, b.z1); } else if (side === 1) { x = b.x1 + d; z = rnd(b.z0, b.z1); } else if (side === 2) { z = b.z0 - d; x = rnd(b.x0, b.x1); } else { z = b.z1 + d; x = rnd(b.x0, b.x1); }
-      } else { const r = 6 + Math.random() * (CFG.arenaR - 12), a = rnd(0, TAU); x = Math.cos(a) * r; z = Math.sin(a) * r; }
+      } else { const r = 6 + Math.random() * (this.boundR - 12), a = rnd(0, TAU); x = Math.cos(a) * r; z = Math.sin(a) * r; }
       const i = this.cellIndex(x, z); if (i < 0 || this.grid[i]) continue;
       const dx = x - px, dz = z - pz; if (dx * dx + dz * dz < 64) continue;
       out.x = this.cellCenterX(i); out.z = this.cellCenterZ(i); return true;
@@ -2633,7 +2673,7 @@ const Zombies = {
     if (!ZTYPES[typeName].boss && Math.random() < 0.3) ok = World.randomPoint(P.x, P.z, 16, 34, true, sp); else ok = false;
     if (!ok) {
       for (let t = 0; t < 30 && !ok; t++) {
-        const a = rnd(0, TAU), r = CFG.arenaR - 4 - Math.random() * 4, x = Math.cos(a) * r, z = Math.sin(a) * r;
+        const a = rnd(0, TAU), r = World.boundR - 4 - Math.random() * 4, x = Math.cos(a) * r, z = Math.sin(a) * r;
         const dx = x - P.x, dz = z - P.z; if (dx * dx + dz * dz < 22 * 22) continue;
         if (World.isBlocked(x, z)) continue; sp.x = x; sp.z = z; ok = true;
       }
@@ -3989,6 +4029,7 @@ const Game = {
     // a coop run is just the same match seeded from the host, so every arena matches exactly
     this.seed = (seed == null) ? Math.floor(Math.random() * 1e9) : seed;
     World.generate(this.seed);
+    World.setBoundary(CFG.arenaR0);   // fresh match always starts back at the original map size
     Zombies.clear(); Bullets.clear(); Pickups.clear(); Floaties.clear(); Particles.clear(); Decals.clear();
     for (const e of Explosions.pool) { e.on = false; e.fire.visible = e.ring.visible = false; } for (const l of Explosions.lights) l.intensity = 0;
     Player.reset(char); Input.reset();
@@ -4045,12 +4086,38 @@ const Game = {
     Floaties.spawn(x, y, z, '+' + n, color || '#ffffff', size || 16, 0.9);
   },
   waveCount(w) { return Math.round(CFG.countBase * Math.pow(CFG.countMul, w - 1)); },
+  // Both the fence and the zombie cap grow on the same 5-round cadence (CFG.arenaGrowRounds),
+  // expressed as a "how many growth steps have happened" tier. The fence's tier is capped at
+  // arenaGrowCapRound (round 30) -- the map stops growing there. The zombie tier is NOT capped --
+  // enemies keep climbing every 5 rounds forever after, bounded only by CFG.maxZombies (maxAlive).
+  growStepsTotal() { return CFG.arenaGrowCapRound / CFG.arenaGrowRounds; },
+  arenaTier(w) { return Math.floor(Math.min(w, CFG.arenaGrowCapRound) / CFG.arenaGrowRounds); },
+  enemyTier(w) { return Math.floor(w / CFG.arenaGrowRounds); },
+  // round-1 (tier 0) = arenaR0; by arenaGrowCapRound (tier = growStepsTotal) the AREA is
+  // arenaAreaMaxMul x that -- area scales with r^2, so the radius multiplier is the area ratio's
+  // sqrt. Holds at the max from then on since arenaTier is capped.
+  arenaRadius(w) {
+    const steps = this.growStepsTotal(), ratio = 1 + (CFG.arenaAreaMaxMul - 1) * (this.arenaTier(w) / steps);
+    return CFG.arenaR0 * Math.sqrt(ratio);
+  },
   // Ramp steepened again alongside maxZombies' 10x jump to 6000 -- +18/wave tops out around
   // wave 332 at that cap, which nobody would ever see. +180/wave reaches it by wave ~33 instead,
   // keeping the "cap actually fills mid-game" pacing intent from the last two rounds of scaling.
-  maxAlive(w) { return Math.min(CFG.maxZombies, 30 + w * 180); },
+  // Replaced by the round-tier ramp above: round-1 value unchanged (enemyAliveBase == old wave-1
+  // value of 210, so early pacing feels the same, just denser on the smaller round-1 map), reaching
+  // 10x that by round 30 and continuing to climb every 5 rounds after -- CFG.maxZombies is the real
+  // ceiling once the ramp gets that far.
+  maxAlive(w) {
+    const steps = this.growStepsTotal(), ratio = 1 + (CFG.enemyAliveMaxMul - 1) * (this.enemyTier(w) / steps);
+    return Math.min(CFG.maxZombies, Math.round(CFG.enemyAliveBase * ratio));
+  },
   beginWave() {
     this.wave++; const w = this.wave;
+    const newR = this.arenaRadius(w);
+    if (Math.abs(newR - World.boundR) > 0.01) {
+      World.setBoundary(newR);
+      if (w > 1) HUD.toast('THE PERIMETER EXPANDS', 2.2);
+    }
     this.toSpawn = this.waveCount(w); this.waveActive = true; this.spawnT = 0.5;
     HUD.banner('WAVE ' + w, w === 1 ? "THEY'RE COMING" : this.toSpawn + ' UNDEAD INBOUND', false);
     Audio.horn(); this.say('wave');
@@ -4454,7 +4521,7 @@ const Mqtt = {
    is no NAT traversal to fail and no TURN server to pay for. */
 // STALE ages out room listings; DROP is the far more forgiving window before a player is kicked,
 // because a browser throttles requestAnimationFrame to nothing the moment a tab goes to the back.
-const NET = { PREFIX: 'dnd/1/', VER: 1, MAX: 4, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6 };
+const NET = { PREFIX: 'dnd/1/', VER: 1, MAX: 8, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6 };
 // APPEND-ONLY. Both arrays are the wire format: snapshots pack the index, so inserting or
 // reordering makes an older client read a hunter as a walker, or `attack` as `dead`.
 const ZSTATE = ['emerge', 'chase', 'attack', 'dead', 'crouch', 'pounce', 'pin'];
