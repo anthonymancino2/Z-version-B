@@ -458,6 +458,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
         <div class="opt on" id="optVoice">VOICE LINES: <span>ON</span></div>
         <div class="opt on" id="optSound">SOUND: <span>ON</span></div>
         <div class="opt slider">LOOK SENS <input type="range" id="optSens" min="0.4" max="2.2" step="0.1" value="1"><span id="sensVal">1.0</span></div>
+        <div class="opt" id="btnSync" title="Force-reload the latest version if the game didn't update on its own">⟳ SYNC</div>
       </div>
       <div class="row">
         <button class="bigbtn" id="btnStart">ENTER THE ARENA</button>
@@ -487,6 +488,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
         <div class="opt on" id="pOptVoice">VOICE LINES: <span>ON</span></div>
         <div class="opt on" id="pOptSound">SOUND: <span>ON</span></div>
         <div class="opt slider">LOOK SENS <input type="range" id="pOptSens" min="0.4" max="2.2" step="0.1" value="1"><span id="pSensVal">1.0</span></div>
+        <div class="opt" id="pBtnSync" title="Force-reload the latest version if the game didn't update on its own">⟳ SYNC</div>
       </div>
       <div class="row">
         <button class="bigbtn" id="btnResume">RESUME</button>
@@ -656,7 +658,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.2.0';
+const GAME_VERSION = 'ZB-1.3.0';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -3339,7 +3341,7 @@ const HUD = {
       'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
       'btnLeaders', 'btnLeadersBack', 'btnLobbyStart', 'btnLobbyLeave', 'lobbyCode', 'lobbyPlayers', 'lobbyStatus', 'lobbyHint',
       'coop', 'netPill', 'downed', 'downedBar', 'downedSub', 'revive', 'reviveText', 'reviveBar', 'lbWrap', 'lbStatus', 'goCoop', 'goRoom',
-      'boss', 'bossName', 'bossBar', 'pinned', 'pinnedSub', 'pinnedBar'
+      'boss', 'bossName', 'bossBar', 'pinned', 'pinnedSub', 'pinnedBar', 'btnSync', 'pBtnSync'
     ].forEach(id => DOM[id] = $(id));
     DOM.lowhp.style.backgroundImage = 'url(' + TEX.lowhpUrl + ')';
     DOM.buffPills = {};
@@ -3946,6 +3948,11 @@ const Game = {
     $('btnStart').addEventListener('click', () => { Audio.unlock(); self.start(); });
     $('btnResume').addEventListener('click', () => self.resume()); $('btnQuit').addEventListener('click', () => self.toMenu());
     $('btnLayout').addEventListener('click', () => Layout.begin());
+    DOM.btnSync.addEventListener('click', () => self.hardSync());
+    DOM.pBtnSync.addEventListener('click', () => {
+      if (self.state === 'playing' || self.state === 'paused') { if (!confirm('This ends your current run and reloads the latest version. Continue?')) return; }
+      self.hardSync();
+    });
     $('btnAgain').addEventListener('click', () => {
       Audio.unlock();
       if (Net.mode === 'host') { Net.seed = Math.floor(Math.random() * 1e9); Net.wipeSent = false; Net.startRun(); }
@@ -4087,6 +4094,15 @@ const Game = {
     if (document.exitPointerLock && Input.pointerLocked) { try { document.exitPointerLock(); } catch (e) { } }
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { }
   },
+  // manual "the page didn't pick up the latest push" escape hatch -- this file has no service
+  // worker, so the usual culprit is the browser (or an intermediate cache) serving a stale copy
+  // from disk cache. A plain reload can still hit that cache; stamping a fresh query param makes
+  // it a "new" URL the browser has to actually re-fetch.
+  hardSync() {
+    const url = new URL(location.href);
+    url.searchParams.set('_sync', Date.now().toString(36));
+    location.replace(url.toString());
+  },
   say(key, force) {
     const char = Player.char, lines = char.lines[key]; if (!lines) return;
     if (!force && this.time - this.sayT < 5) return;
@@ -4127,6 +4143,15 @@ const Game = {
     const steps = this.growStepsTotal(), ratio = 1 + (CFG.enemyAliveMaxMul - 1) * (this.enemyTier(w) / steps);
     return Math.min(CFG.maxZombies, Math.round(CFG.enemyAliveBase * ratio));
   },
+  // more ambient pickups allowed on the map as rounds go on (+1 every 4 rounds off a base of 3),
+  // and they turn over faster too (the gap between spawn checks shrinks from 13-21s toward a
+  // 5-9s floor by round 30, never disappearing entirely). CFG.pickups is only a 14-deep pool, so
+  // the cap leaves a couple of slots free for the unconditional wave-cleared/low-ammo bonus spawns.
+  pickupCap(w) { return Math.min(CFG.pickups - 2, 3 + Math.floor((w - 1) / 4)); },
+  pickupInterval(w) {
+    const t = Math.min(1, (w - 1) / 29);
+    return rnd(lerp(13, 5, t), lerp(21, 9, t));
+  },
   beginWave() {
     this.wave++; const w = this.wave;
     const newR = this.arenaRadius(w);
@@ -4159,7 +4184,7 @@ const Game = {
     if (w > 1) {
       Player.resupply(0.3);
       World.restockBarrels();
-      if (Pickups.count() < 3 && World.coverPoint(Player.x, Player.z, this._pt)) Pickups.spawn(Player.lowOnAmmo() ? 'ammo' : (Math.random() < 0.5 ? 'health' : 'ammo'), this._pt.x, this._pt.z);
+      if (Pickups.count() < this.pickupCap(w) && World.coverPoint(Player.x, Player.z, this._pt)) Pickups.spawn(Player.lowOnAmmo() ? 'ammo' : (Math.random() < 0.5 ? 'health' : 'ammo'), this._pt.x, this._pt.z);
     }
     HUD.last = {};
   },
@@ -4358,7 +4383,7 @@ const Game = {
           HUD.banner('WAVE ' + this.wave + ' CLEARED', 'CATCH YOUR BREATH', false); Audio.cleared(); this.say('cleared');
           if (World.coverPoint(P.x, P.z, this._pt)) Pickups.spawn(Math.random() < 0.6 ? 'health' : (Math.random() < 0.5 ? 'insta' : 'double'), this._pt.x, this._pt.z);
         }
-        this.pickupT -= dt; if (this.pickupT <= 0) { this.pickupT = rnd(13, 21); if (Pickups.count() < 3) this.spawnPickup(); }
+        this.pickupT -= dt; if (this.pickupT <= 0) { this.pickupT = this.pickupInterval(this.wave); if (Pickups.count() < this.pickupCap(this.wave)) this.spawnPickup(); }
       }
       // heartbeat when low
       if (P.hp < P.maxHp * 0.3) { this.heartT -= dt; if (this.heartT <= 0) { this.heartT = 1.1; Audio.heartbeat(); } }
