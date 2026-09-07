@@ -304,6 +304,16 @@ h1.title em{font-style:normal;color:var(--accent2);}
 .empty{font-family:var(--hud-font);font-size:12px;letter-spacing:.18em;color:var(--dim);padding:18px 0;text-align:center;}
 
 .plist{display:flex;flex-direction:column;gap:6px;margin:12px auto;max-width:460px;text-align:left;}
+
+/* end-of-run results: always a 2x2 grid, one quadrant per player (real or bot) -- solo just
+   renders a single cell, everyone else fills in as the squad actually was */
+.resultGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:460px;margin:14px auto 0;}
+.resultCell{background:var(--panel);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:12px 8px;text-align:center;}
+.resultCell.me{border-color:#ffd83b;box-shadow:0 0 14px rgba(255,216,59,.22);}
+.resultCell .rn{font-family:var(--hud-font);font-size:14px;letter-spacing:.08em;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.resultCell .rk{font-family:var(--hud-font);font-size:24px;letter-spacing:.05em;color:var(--accent2);text-shadow:0 0 10px var(--glow);margin-top:3px;}
+.resultCell .rs{font-family:var(--hud-font);font-size:10px;letter-spacing:.14em;color:var(--dim);margin-top:3px;}
+@media (max-width:420px){ .resultGrid{max-width:320px;} .resultCell .rk{font-size:20px;} }
 .pent{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid rgba(255,255,255,.14);border-radius:9px;padding:8px 12px;}
 .pent .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--glow);flex:none;}
 .pent.me .dot{background:#ffd83b;box-shadow:0 0 8px rgba(255,216,59,.8);}
@@ -557,7 +567,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
       </div>
       <div class="best" id="goBest"></div>
       <div id="goRoom" class="subhead"></div>
-      <div class="plist" id="goCoop"></div>
+      <div class="resultGrid" id="goGrid"></div>
       <div class="row">
         <button class="bigbtn" id="btnAgain">PLAY AGAIN</button>
         <button class="bigbtn secondary" id="btnMenu">MAIN MENU</button>
@@ -569,7 +579,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
   <div id="online" class="screen">
     <div class="scroll"><div class="panel">
       <h1 class="title" style="font-size:clamp(30px,7vw,58px)">PLAY <em>TOGETHER</em></h1>
-      <div class="tag">2&ndash;8 SURVIVORS &middot; ONE ARENA</div>
+      <div class="tag">4-SURVIVOR SQUAD &middot; BOTS FILL ANY OPEN SEAT</div>
       <div class="netfield">
         <label for="inpName">CALLSIGN</label>
         <input class="netinput" id="inpName" maxlength="14" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="SURVIVOR">
@@ -714,7 +724,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.8.1';
+const GAME_VERSION = 'ZB-1.9.0';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -839,8 +849,9 @@ const CHARS = {
    champions, each a unique two-tone combo. `accent`/`headColor` are literally the whole model.
    Gender still decides which CHARS stat/voice block a champion inherits (Player.reset merges
    the two). */
-// 8 color combos total -- matches NET.MAX (8), so a full online room can always give every
-// player a distinct color (see Net.pickAvatarFor)
+// 8 color combos total -- more than NET.MAX's 4 seats, so a full room (real players and any
+// bots filling the rest, see Bots.syncCoopCount) can always give everyone a distinct color
+// (see Net.pickAvatarFor / Bots.pickAvatarForBot)
 const AVATARS = {
   blue: { id: 'blue', gender: 'male', key: 'blue', short: 'BLUE', label: 'BLUE', cls: 'SURVIVOR',
     desc: 'Same fight as everyone else. Just blue.', accent: 0x2f6fff, headColor: 0xffa62f },
@@ -3521,7 +3532,7 @@ const HUD = {
       'radar', 'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpNameMenu', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
       'btnLeaders', 'btnLeadersBack', 'btnLobbyStart', 'btnLobbyLeave', 'lobbyCode', 'lobbyPlayers', 'lobbyStatus', 'lobbyHint',
       'lobbyCountdown', 'lobbyStartHint', 'lobbyVote', 'lobbyVoteText', 'lobbyVoteSub', 'btnVoteYes', 'btnVoteNo',
-      'coop', 'netPill', 'downed', 'downedBar', 'downedSub', 'revive', 'reviveText', 'reviveBar', 'lbWrap', 'lbStatus', 'goCoop', 'goRoom',
+      'coop', 'netPill', 'downed', 'downedBar', 'downedSub', 'revive', 'reviveText', 'reviveBar', 'lbWrap', 'lbStatus', 'goGrid', 'goRoom',
       'boss', 'bossName', 'bossBar', 'pinned', 'pinnedSub', 'pinnedBar', 'btnSync', 'pBtnSync'
     ].forEach(id => DOM[id] = $(id));
     DOM.lowhp.style.backgroundImage = 'url(' + TEX.lowhpUrl + ')';
@@ -3748,6 +3759,60 @@ const Bots = {
     }).catch(e => console.error('bot avatar failed to load', e));
   },
 
+  // colors already spoken for in the room right now -- every real player's pick, plus whichever
+  // bots are already active -- so two bots activated back to back in the same syncCoopCount pass
+  // never grab the same one.
+  usedAvatarIds() {
+    const used = new Set([Game.charId]);
+    for (const k in Net.peers) used.add(Net.peers[k].char);
+    for (const b of this.list) if (b.squadActive) used.add(b.avatarId);
+    return used;
+  },
+  pickAvatarForBot(b) {
+    const used = this.usedAvatarIds(), pool = AVATAR_ORDER[b.def.char] || AVATAR_ORDER.male;
+    for (const id of pool) if (!used.has(id)) return id;
+    return pool[0];
+  },
+  // one bot in or out, without touching whichever others are already mid-fight -- Game.start()'s
+  // unconditional Bots.spawn()/clear() (below) is the solo path and would reset a coop bot's HP,
+  // kills and position every time, so coop drives these two directly instead (see syncCoopCount).
+  activateBot(b) {
+    this.build(); this.on = true;
+    this.assignAvatar(b, this.pickAvatarForBot(b));
+    b.squadActive = true;
+    b.hp = b.maxHp; b.alive = true; b.down = false; b.out = false; b.downT = 0; b.pinnedBy = null;
+    b.kills = 0; b.head = 0; b.cool = rnd(0, 0.4); b.anim = rnd(0, 6); b.gait = 0; b.flashT = 0;
+    b.lastHurt = -99; b.target = null; b.aimT = 0; b.reviveT = 0; b.reviveOn = null;
+    const a = rnd(0, TAU);
+    b.x = Player.x + Math.cos(a) * 2.4; b.z = Player.z + Math.sin(a) * 2.4; b.vx = b.vz = 0; b.ry = Player.yaw;
+    World.collide(b, 0.42);
+  },
+  deactivateBot(b) {
+    if (b.pinnedBy) { b.pinnedBy.endPin(); }
+    b.squadActive = false; b.alive = false; b.down = false; b.out = true; b.pinnedBy = null; b.target = null;
+    b.vis.g.visible = false; b.shadow.visible = false; b.label.visible = false;
+  },
+  // Coop rooms are always a 4-seat squad (NET.MAX): whatever a real player hasn't taken gets a
+  // bot, so a solo host is never actually shorthanded and a friend joining mid-run visibly steps
+  // into an open seat instead of politely waiting for room. Host-only, idempotent -- it only ever
+  // activates/retires the difference between what's live and what NET.MAX - roomSize() calls for.
+  // Called once right after a run starts and periodically during it (see Net.startRun/update).
+  syncCoopCount() {
+    if (!Net.isHost()) return;
+    this.build();
+    const want = clamp(NET.MAX - Net.roomSize(), 0, this.list.length);
+    let active = this.list.filter(function (b) { return b.squadActive; });
+    while (active.length < want) {
+      const b = this.list.find(function (b) { return !b.squadActive; }); if (!b) break;
+      this.activateBot(b); active = this.list.filter(function (b) { return b.squadActive; });
+    }
+    while (active.length > want) {
+      this.deactivateBot(active[active.length - 1]);
+      active = this.list.filter(function (b) { return b.squadActive; });
+    }
+    this.on = active.length > 0;
+  },
+
   /* ---------------- lifecycle ---------------- */
   spawn() {
     this.clear();
@@ -3850,7 +3915,9 @@ const Bots = {
       this.draw(b, dt);
     }
     this.updatePlayerRevive(dt);
-    this.renderHud();
+    // real coop has its own teammate strip (Net.renderCoopHud, which merges these same bots in
+    // alongside real peers on the host's screen) -- both writing to #coop would just fight
+    if (!Net.on()) this.renderHud();
   },
   // the closest standing bot to whoever most needs picking up — the player always outranks a bot
   pickReviver() {
@@ -4239,7 +4306,9 @@ const Game = {
   setSquadCount(n) {
     this.squadCount = clamp(n, 0, 3); this.squad = this.squadCount > 0;
     try { localStorage.setItem('dnd_squadcount', String(this.squadCount)); localStorage.setItem('dnd_squad', this.squad ? '1' : '0'); } catch (e) { }
-    if (this.state === 'playing' || this.state === 'paused') { if (Net.mode === 'off') Bots.spawn(); else Bots.clear(); }
+    // in coop the option itself just reads "COOP" and does nothing (see refreshOptions) -- coop's
+    // bot count is a fixed NET.MAX-seat thing driven by Bots.syncCoopCount, not this control
+    if (Net.mode === 'off' && (this.state === 'playing' || this.state === 'paused')) Bots.spawn();
     HUD.refreshOptions();
   },
   // GRIT/VITALS, SPEED and RELOAD bars are per-gender (every champion of a gender shares that
@@ -4631,22 +4700,26 @@ const Game = {
     DOM.goTag.textContent = Player.char.id === 'male' ? 'THE DESERT KEEPS ITS DEAD' : 'OPERATOR DOWN. MISSION FAILED.';
     const coop = Net.mode !== 'off', squad = !coop && Bots.on;
     DOM.goRoom.textContent = coop ? 'SQUAD RUN · ROOM ' + Net.code : (squad ? 'SQUAD RUN · WITH BOTS' : '');
-    if (squad) {
-      const rows = [{ n: Net.displayName(), k: Player.stats.kills, me: true }].concat(Bots.scoreRows());
-      rows.sort(function (a, b) { return b.k - a.k; });
-      DOM.goCoop.innerHTML = rows.map(function (r) {
-        return '<div class="pent' + (r.me ? ' me' : '') + '"><span class="dot"></span><span class="pn">' +
-          Net.esc(r.n) + '</span><span class="pr">' + r.k + (r.k === 1 ? ' KILL' : ' KILLS') + '</span></div>';
-      }).join('');
-    } else if (coop) {
-      const rows = [{ n: Net.displayName(), k: Player.stats.kills, me: true }];
+    // Every run's results are the same 2x2 grid, whoever's actually in it: solo is one cell, a
+    // bot-filled squad or a real coop room fill in up to NET.MAX. Score is a shared team total
+    // (Game.points), not tracked per player, so it repeats in every cell alongside that player's
+    // own kill count -- the one stat that IS individual.
+    const rows = [{ n: Net.displayName(), k: Player.stats.kills, me: true }];
+    if (squad) rows.push(...Bots.scoreRows());
+    else if (coop) {
       for (const pk in Net.peers) rows.push({ n: Net.peers[pk].name, k: Net.peers[pk].kills, me: false });
-      rows.sort(function (a, b) { return b.k - a.k; });
-      DOM.goCoop.innerHTML = rows.map(function (r) {
-        return '<div class="pent' + (r.me ? ' me' : '') + '"><span class="dot"></span><span class="pn">' +
-          Net.esc(r.n) + '</span><span class="pr">' + r.k + (r.k === 1 ? ' KILL' : ' KILLS') + '</span></div>';
-      }).join('');
-    } else DOM.goCoop.innerHTML = '';
+      // the host's own bots never appear in its own Net.peers (see roster()'s comment) -- a
+      // client doesn't need this, since bots already arrived as ordinary rows in Net.peers for them
+      if (Net.mode === 'host') for (const b of Bots.list) if (b.squadActive) rows.push({ n: b.name, k: b.kills, me: false });
+    }
+    rows.sort(function (a, b) { return b.k - a.k; });
+    const scoreTxt = fmt(this.points);
+    DOM.goGrid.innerHTML = rows.slice(0, NET.MAX).map(function (r) {
+      return '<div class="resultCell' + (r.me ? ' me' : '') + '">' +
+        '<div class="rn">' + Net.esc(r.n) + '</div>' +
+        '<div class="rk">' + r.k + (r.k === 1 ? ' KILL' : ' KILLS') + '</div>' +
+        '<div class="rs">SCORE ' + scoreTxt + '</div></div>';
+    }).join('');
     // three guns on your side is not the same run as one, so the board says which it was
     Board.submit(Net.displayName(), this.points, this.wave, this.kills, coop ? 1 : (squad ? 2 : 0));
     HUD.showHud(false); HUD.showScreen('gameover');
@@ -4873,7 +4946,9 @@ const Mqtt = {
 // STALE ages out room listings; DROP is the far more forgiving window before a player is kicked,
 // because a browser throttles requestAnimationFrame to nothing the moment a tab goes to the back.
 const NET = {
-  PREFIX: 'dnd/1/', VER: 1, MAX: 8, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6,
+  // a room is always a 4-person squad -- any seat a real player hasn't taken is bot-filled (see
+  // Bots.syncCoopCount), and the end-of-run board is a fixed 2x2 grid to match
+  PREFIX: 'dnd/1/', VER: 1, MAX: 4, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6,
   LOBBY_MAX: 300,     // auto-starts the run after 5 minutes of waiting, so a lobby can't sit forever
   LOBBY_MIN: 10,      // instant-start is locked out for the first 10s so a solo host can't be sniped mid-load
   VOTE_TIMEOUT: 20,    // an instant-start vote that isn't unanimous within 20s cancels itself
@@ -5080,6 +5155,7 @@ const Net = {
   pickAvatarFor(preferred) {
     const taken = new Set([Game.charId]);
     for (const k in this.peers) taken.add(this.peers[k].char);
+    for (const b of Bots.list) if (b.squadActive) taken.add(b.avatarId);
     if (preferred && AVATARS[preferred] && !taken.has(preferred)) return preferred;
     for (const id in AVATARS) if (!taken.has(id)) return id;
     return preferred || 'blue';   // room somehow has more members than colors -- shouldn't happen, NET.MAX matches AVATARS' count
@@ -5094,6 +5170,9 @@ const Net = {
         peer = this.mkPeer(id, m.n, ch); this.peers[id] = peer;
         HUD.toast(peer.name + ' JOINED', 2.6); Audio.ding();
         this.refreshLobby(); this.beacon();
+        // a live player stepping into a bot-filled seat retires one immediately, so the newcomer
+        // doesn't sit alongside a "5th" teammate for however long the periodic resync would take
+        if (this.started) Bots.syncCoopCount();
         // Everyone already connected needs to learn about a brand-new peer too, not just other
         // people still sitting in the lobby -- this used to only fire pre-run (the `else` below),
         // so joining mid-run left already-playing clients with no roster entry for the newcomer at
@@ -5134,6 +5213,10 @@ const Net = {
   roster() {
     const a = [{ id: this.id, n: this.displayName(), ch: Game.charId, k: Player.stats.kills }];
     for (const k in this.peers) { const p = this.peers[k]; a.push({ id: p.id, n: p.name, ch: p.char, k: p.kills }); }
+    // bots fill out a coop squad to NET.MAX (see Bots.syncCoopCount) -- broadcasting them through
+    // the same roster/snapshot messages a real peer uses means every client renders, reviving-
+    // targets and end-of-run-scores them with zero bot-specific code of their own
+    if (this.mode === 'host') for (const b of Bots.list) if (b.squadActive) a.push({ id: b.id, n: b.name, ch: b.avatarId, k: b.kills });
     return a;
   },
   dropPeer(id, why) {
@@ -5141,6 +5224,7 @@ const Net = {
     HUD.toast(p.name + (why || ' DISCONNECTED'), 2.6);
     this.killAvatar(p); delete this.peers[id];
     this.refreshLobby(); this.beacon();
+    if (this.started) Bots.syncCoopCount();   // their seat opens right back up to a bot
     this.send({ k: 'roster', roster: this.roster() });
     if (this.started) this.checkTeamWipe();
     // someone leaving mid-vote can turn a not-yet-unanimous vote into a unanimous one
@@ -5155,7 +5239,11 @@ const Net = {
     this.started = true; this.wipeSent = false; this.startVote = null;
     this.send({ k: 'go', seed: this.seed });
     this.beacon();
+    // Game.start() unconditionally calls Bots.spawn()/clear() first (the solo path), which would
+    // immediately wipe out any coop bots activated before this point -- so the coop fill-to-4
+    // has to happen after, not before.
     Game.start(this.seed);
+    Bots.syncCoopCount();
   },
   /* ---------------- lobby countdown + instant-start vote ----------------
      The waiting room auto-starts after NET.LOBBY_MAX seconds so nobody is stuck there forever.
@@ -5343,7 +5431,17 @@ const Net = {
   },
   applyRevive(targetId, by) {
     if (targetId === this.id) { Player.revive(); HUD.toast('REVIVED BY ' + (by ? by.name : 'A TEAMMATE'), 2.6); return; }
-    const p = this.peers[targetId]; if (!p || p.st !== 1) return;
+    const p = this.peers[targetId];
+    if (!p) {
+      // not a real peer -- a client reviving a bot looks identical to reviving a peer on their
+      // end (bots are just another roster/snapshot row to them), so this is where that request
+      // actually lands; Bots.list only has real entries on the host, which is the only machine
+      // this branch ever runs on anyway (applyRevive is host-only).
+      const bot = Bots.list.find(function (b) { return b.id === targetId; });
+      if (bot && bot.squadActive && bot.down) Bots.reviveBot(bot);
+      return;
+    }
+    if (p.st !== 1) return;
     p.st = 0; p.hp = Math.round(p.maxHp * CFG.reviveHp);
     this.send({ k: 'rev', to: targetId, by: by ? by.id : this.id });
   },
@@ -5353,6 +5451,7 @@ const Net = {
     // revive each other, so waiting out their bleed-out timers would just stall everyone.
     if (Player.alive) return;
     for (const k in this.peers) if (this.peers[k].st === 0) return;
+    for (const b of Bots.list) if (b.squadActive && !b.down && !b.out) return;
     this.wipeSent = true;
     this.send({ k: 'over', wv: Game.wave, pts: Math.round(Game.points), kl: Game.kills, roster: this.roster() });
     Game.endRun();
@@ -5418,7 +5517,7 @@ const Net = {
       // Re-sending the full roster every few seconds means that guess is wrong for at most a few
       // seconds, on any number of players, instead of for the rest of the match.
       this.tRoster -= dt;
-      if (this.tRoster <= 0) { this.tRoster = NET.ROSTER; this.send({ k: 'roster', roster: this.roster() }); }
+      if (this.tRoster <= 0) { this.tRoster = NET.ROSTER; Bots.syncCoopCount(); this.send({ k: 'roster', roster: this.roster() }); }
       this.checkTeamWipe();
     } else {
       this.tInput -= dt;
@@ -5457,6 +5556,10 @@ const Net = {
     for (const k in this.peers) {
       const p = this.peers[k];
       pl.push([p.id, r2(p.tx), r2(p.tz), r2(p.tRy), Math.round(p.hp), p.maxHp, p.st, p.w, p.kills, 0, p.head, p.afk]);
+    }
+    // bots ride the exact same row shape a real peer does -- see roster()'s comment
+    for (const b of Bots.list) if (b.squadActive) {
+      pl.push([b.id, r2(b.x), r2(b.z), r2(b.ry), Math.round(b.hp), b.maxHp, b.out ? 2 : (b.down ? 1 : 0), 0, b.kills, b.flashT > 0 ? 1 : 0, b.head, 0]);
     }
     this.send({
       k: 's', wv: Game.wave, wa: Game.waveActive ? 1 : 0, ts: Game.toSpawn, pts: Math.round(Game.points),
@@ -5553,6 +5656,12 @@ const Net = {
       const d = (p.x - zb.x) * (p.x - zb.x) + (p.z - zb.z) * (p.z - zb.z);
       if (d < bd) { bd = d; best = p; }
     }
+    // bot-filled seats (see Bots.syncCoopCount) are just as much a target as anyone real
+    for (const b of Bots.list) {
+      if (!b.squadActive || b.down || b.out) continue;
+      const d = (b.x - zb.x) * (b.x - zb.x) + (b.z - zb.z) * (b.z - zb.z);
+      if (d < bd) { bd = d; best = b; }
+    }
     // everyone is down (or paused): keep shambling toward the local body so the horde does not freeze
     return best || Player;
   },
@@ -5561,6 +5670,7 @@ const Net = {
     let n = 0, sx = 0, sz = 0;
     if (Player.alive && !Game.coopMenu) { sx += Player.x; sz += Player.z; n++; }
     for (const k in this.peers) { const p = this.peers[k]; if (p.st === 0 && !p.afk) { sx += p.x; sz += p.z; n++; } }
+    for (const b of Bots.list) { if (b.squadActive && !b.down && !b.out) { sx += b.x; sz += b.z; n++; } }
     if (!n) { out.x = Player.x; out.z = Player.z; } else { out.x = sx / n; out.z = sz / n; }
     return out;
   },
@@ -5688,6 +5798,13 @@ const Net = {
       const dx = p.x - Player.x, dz = p.z - Player.z, d = dx * dx + dz * dz;
       if (d < bd) { bd = d; best = p; }
     }
+    // the host's own bots never show up in its own Net.peers (see roster()'s comment) -- a client
+    // never needs this branch since bots already arrive as ordinary (revivable) peer rows to them
+    if (this.mode === 'host') for (const b of Bots.list) {
+      if (!b.squadActive || !b.down) continue;
+      const dx = b.x - Player.x, dz = b.z - Player.z, d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = b; }
+    }
     if (!best) { this.reviveTarget = null; this.reviveT = 0; DOM.revive.classList.remove('show'); return; }
     if (this.reviveTarget !== best) { this.reviveTarget = best; this.reviveT = 0; }
     this.reviveT += dt;
@@ -5709,6 +5826,12 @@ const Net = {
   renderCoopHud() {
     const el = DOM.coop; if (!el) return;
     const list = this.peerList();
+    // on the host's own screen, active bots are peers to everyone else (see syncCoopCount/roster)
+    // but never actually IN Net.peers here -- add them so the local teammate strip matches what
+    // every client already sees.
+    if (this.mode === 'host') for (const b of Bots.list) if (b.squadActive) {
+      list.push({ id: b.id, name: b.name, hp: b.hp, maxHp: b.maxHp, st: b.out ? 2 : (b.down ? 1 : 0) });
+    }
     if (!list.length) { if (el._ids !== '') { el._ids = ''; el.innerHTML = ''; } el.classList.remove('show'); return; }
     el.classList.add('show');
     const ids = list.map(function (p) { return p.id; }).join(',');
