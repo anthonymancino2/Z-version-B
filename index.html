@@ -656,7 +656,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.1.0';
+const GAME_VERSION = 'ZB-1.2.0';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -666,11 +666,17 @@ const CFG = {
   // generation scatters props across that whole eventual footprint up front (see World.generate),
   // and grid/gridMin size the nav grid to cover it, so growing the fence later is just moving the
   // boundary outward into terrain that's already there, never a live regeneration.
-  arenaR0: 58,             // original playable radius -- what round 1 (and every fresh match) starts at
+  // arenaR0 dropped again (29, area/4 from the 58 it launched at) per owner request -- still a
+  // radius, so half the radius is a quarter the AREA, matching how every other size in this block
+  // is reasoned about. arenaGrowCapRound's target stays a RATIO of round 1 (5x its area), so this
+  // shrinks round 30's absolute size right along with round 1's, not just the opening round.
+  arenaR0: 29,             // original playable radius -- what round 1 (and every fresh match) starts at
   arenaAreaMaxMul: 5,      // by arenaGrowCapRound the playable AREA is 5x the round-1 area
   arenaGrowRounds: 5,      // the fence (and the zombie cap below) step up every 5th round
   arenaGrowCapRound: 30,   // the fence stops growing once this round is reached
-  arenaR: 129.7,           // = arenaR0 * sqrt(arenaAreaMaxMul) -- max terrain extent / grid coverage
+  arenaR: 64.85,           // = arenaR0 * sqrt(arenaAreaMaxMul) -- max terrain extent / grid coverage
+  // grid/gridMin sized generously for the OLD, bigger max extent -- still safely covers the new
+  // (smaller) one, just with headroom to spare, so left as-is rather than re-tuned for no benefit
   grid: 264, gridMin: -132, cell: 1,
   playerR: 0.45, eyeH: 1.62,
   // Z version B: flat-colored one-draw-call zombies are ~4-6x cheaper than the old six-mesh
@@ -775,17 +781,27 @@ const CHARS = {
    champions, each a unique two-tone combo. `accent`/`headColor` are literally the whole model.
    Gender still decides which CHARS stat/voice block a champion inherits (Player.reset merges
    the two). */
+// 8 color combos total -- matches NET.MAX (8), so a full online room can always give every
+// player a distinct color (see Net.pickAvatarFor)
 const AVATARS = {
   blue: { id: 'blue', gender: 'male', key: 'blue', short: 'BLUE', label: 'BLUE', cls: 'SURVIVOR',
     desc: 'Same fight as everyone else. Just blue.', accent: 0x2f6fff, headColor: 0xffa62f },
   red: { id: 'red', gender: 'male', key: 'red', short: 'RED', label: 'RED', cls: 'SURVIVOR',
     desc: 'Same fight as everyone else. Just red.', accent: 0xe6303f, headColor: 0x2fe6c9 },
+  green: { id: 'green', gender: 'male', key: 'green', short: 'GREEN', label: 'GREEN', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just green.', accent: 0x2fbf46, headColor: 0xff4fd8 },
+  orange: { id: 'orange', gender: 'male', key: 'orange', short: 'ORANGE', label: 'ORANGE', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just orange.', accent: 0xff8c2f, headColor: 0x2f9bff },
   pink: { id: 'pink', gender: 'female', key: 'pink', short: 'PINK', label: 'PINK', cls: 'SURVIVOR',
     desc: 'Same fight as everyone else. Just pink.', accent: 0xff4fa3, headColor: 0xb6ff2f },
   purple: { id: 'purple', gender: 'female', key: 'purple', short: 'PURPLE', label: 'PURPLE', cls: 'SURVIVOR',
-    desc: 'Same fight as everyone else. Just purple.', accent: 0x9b3fd6, headColor: 0xffd23f }
+    desc: 'Same fight as everyone else. Just purple.', accent: 0x9b3fd6, headColor: 0xffd23f },
+  teal: { id: 'teal', gender: 'female', key: 'teal', short: 'TEAL', label: 'TEAL', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just teal.', accent: 0x1fd8c4, headColor: 0xff6b4a },
+  yellow: { id: 'yellow', gender: 'female', key: 'yellow', short: 'YELLOW', label: 'YELLOW', cls: 'SURVIVOR',
+    desc: 'Same fight as everyone else. Just yellow.', accent: 0xf5d92f, headColor: 0x5a3fd6 }
 };
-const AVATAR_ORDER = { male: ['blue', 'red'], female: ['pink', 'purple'] };
+const AVATAR_ORDER = { male: ['blue', 'red', 'green', 'orange'], female: ['pink', 'purple', 'teal', 'yellow'] };
 
 const AVATAR_SHOULDER = { x: 0.38, y: 1.44 }; // matches _torsoGeo's torso: 0.62 wide, 1.44 tall
 const Avatars = {
@@ -4688,18 +4704,32 @@ const Net = {
       w: Game.wave, st: this.started ? 'playing' : 'lobby', v: NET.VER, t: Date.now()
     }));
   },
+  // the host is the single authority on who has which color, same as it is for seed/wave/score --
+  // picks the peer's requested color if it's free, otherwise the first free color left (join
+  // messages are handled one at a time off a single MQTT queue, so two simultaneous requests for
+  // the same color can't actually race each other here)
+  pickAvatarFor(preferred) {
+    const taken = new Set([Game.charId]);
+    for (const k in this.peers) taken.add(this.peers[k].char);
+    if (preferred && AVATARS[preferred] && !taken.has(preferred)) return preferred;
+    for (const id in AVATARS) if (!taken.has(id)) return id;
+    return preferred || 'blue';   // room somehow has more members than colors -- shouldn't happen, NET.MAX matches AVATARS' count
+  },
   hostRecv(m) {
     const id = m.id; if (!id || id === this.id) return;
     if (m.k === 'join') {
       let peer = this.peers[id];
       if (!peer) {
         if (this.roomSize() >= NET.MAX) { this.send({ k: 'full', to: id }); return; }
-        peer = this.mkPeer(id, m.n, m.ch); this.peers[id] = peer;
+        const ch = this.pickAvatarFor(m.ch);
+        peer = this.mkPeer(id, m.n, ch); this.peers[id] = peer;
         HUD.toast(peer.name + ' JOINED', 2.6); Audio.ding();
         this.refreshLobby(); this.beacon();
       }
       peer.last = this.clock;
-      this.send({ k: 'welcome', to: id, h: this.id, seed: this.seed, host: this.displayName(), st: this.started ? 'playing' : 'lobby', roster: this.roster() });
+      // `ch` tells the joiner which color they actually got -- may differ from what they asked
+      // for if it was already taken (see pickAvatarFor)
+      this.send({ k: 'welcome', to: id, h: this.id, seed: this.seed, host: this.displayName(), st: this.started ? 'playing' : 'lobby', roster: this.roster(), ch: peer.char });
       if (this.started) this.send({ k: 'go', to: id, seed: this.seed });
       else this.send({ k: 'roster', roster: this.roster() });   // everyone already waiting needs the update
       return;
@@ -4717,7 +4747,7 @@ const Net = {
     const self = this;
     return {
       id: id, name: (String(name || 'SURVIVOR').slice(0, 14) || 'SURVIVOR').toUpperCase(),
-      char: ch === 'female' ? 'female' : 'male',
+      char: AVATARS[ch] ? ch : 'blue',
       x: 0, z: 0, ry: 0, hp: 100, maxHp: 100, st: 0, w: 0, fire: 0, kills: 0, head: 0, afk: 0, pinnedBy: null,
       tx: 0, tz: 0, tRy: 0, vis: null, walk: 0, flashT: 0, last: Net.clock,
       get alive() { return this.st === 0; },
@@ -4763,6 +4793,10 @@ const Net = {
     if (m.k === 'welcome') {
       this.joining = false; this.inRoom = true; this.seed = m.seed;
       this.hostId = m.h || ''; this.hostName = String(m.host || 'HOST');
+      // the host may have handed back a different color than requested (see Net.pickAvatarFor) if
+      // someone already in the room had ours -- adopt whatever it says so our own body/menu match
+      // what everyone else's roster actually shows for us
+      if (m.ch && m.ch !== Game.charId) { Game.selectChar(m.ch); HUD.toast('COLOR TAKEN — YOU\'RE ' + AVATARS[m.ch].label + ' NOW', 3); }
       this.applyRoster(m.roster);
       if (m.st !== 'playing') this.showLobby();
       return;
