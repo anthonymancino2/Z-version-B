@@ -714,7 +714,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.8.0';
+const GAME_VERSION = 'ZB-1.8.1';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -4333,10 +4333,13 @@ const Game = {
   // manual "the page didn't pick up the latest push" escape hatch -- this file has no service
   // worker, so the usual culprit is the browser (or an intermediate cache) serving a stale copy
   // from disk cache. A plain reload can still hit that cache; stamping a fresh query param makes
-  // it a "new" URL the browser has to actually re-fetch.
-  hardSync() {
+  // it a "new" URL the browser has to actually re-fetch. `resume` optionally stamps a marker read
+  // back out on the other side of the reload (see boot()'s `_coop` check) so the fresh load can
+  // drop the player somewhere other than the bare main menu.
+  hardSync(resume) {
     const url = new URL(location.href);
     url.searchParams.set('_sync', Date.now().toString(36));
+    if (resume) url.searchParams.set('_resume', resume);
     location.replace(url.toString());
   },
   say(key, force) {
@@ -4959,6 +4962,16 @@ const Net = {
     field.focus();
     HUD.toast('ENTER A NAME FIRST, SURVIVOR', 2.4);
     return false;
+  },
+  // COOP MODE always goes through a hard sync first: coop is exactly where two players on
+  // different cached versions of this file would actually collide (mismatched message shapes,
+  // a fixed bug reappearing for whoever's still on the old copy), so force everyone through the
+  // same "fetch the real latest copy" reload every single time before they can host or join.
+  // hardSync()'s reload restarts the whole app, so boot() reads the `_resume` marker back out on
+  // the other side and opens the coop browser automatically instead of leaving them at the menu.
+  enterCoop() {
+    if (!this.requireName()) return;
+    Game.hardSync('coop');
   },
   topicH(code) { return NET.PREFIX + 'r/' + (code || this.code) + '/h'; },
   topicC(code) { return NET.PREFIX + 'r/' + (code || this.code) + '/c'; },
@@ -5729,7 +5742,7 @@ const Net = {
     };
     DOM.inpName.addEventListener('input', onNameInput);
     DOM.inpNameMenu.addEventListener('input', onNameInput);
-    DOM.btnOnline.addEventListener('click', function () { if (!self.requireName()) return; self.openOnline(); });
+    DOM.btnOnline.addEventListener('click', function () { self.enterCoop(); });
     DOM.btnOnlineBack.addEventListener('click', function () { self.closeOnline(); });
     DOM.btnHost.addEventListener('click', function () { if (!self.requireName()) return; Audio.unlock(); self.host(); });
     DOM.btnJoinCode.addEventListener('click', function () { if (!self.requireName()) return; Audio.unlock(); self.join(DOM.inpCode.value); });
@@ -5966,6 +5979,17 @@ function boot() {
     const el = $('loadErr'); el.classList.add('show'); el.querySelector('h3').textContent = 'COULD NOT START THE ARENA'; el.querySelector('p').textContent = 'WebGL may be unavailable on this device. (' + (e && e.message ? e.message : e) + ')';
     return;
   }
+  // the other side of Net.enterCoop()'s hardSync('coop') reload -- land straight in the coop
+  // browser instead of the bare main menu, then scrub the marker so a manual refresh later
+  // doesn't keep bouncing back here.
+  try {
+    const qp = new URL(location.href);
+    if (qp.searchParams.get('_resume') === 'coop') {
+      qp.searchParams.delete('_resume'); qp.searchParams.delete('_sync');
+      history.replaceState(null, '', qp.toString());
+      Net.openOnline();
+    }
+  } catch (e) { }
   window.__resume = function (t) { lastFrame = t; requestAnimationFrame(loop); };
   // exposed for debugging / automated testing
   window.DND = { Game: Game, Player: Player, Zombies: Zombies, World: World, Bullets: Bullets, Pickups: Pickups, Audio: Audio, Input: Input,
