@@ -395,6 +395,9 @@ h1.title em{font-style:normal;color:var(--accent2);}
         <div class="pill insta" id="pillInsta">INSTA-KILL 15s</div>
         <div class="pill dbl" id="pillDbl">2X POINTS 30s</div>
       </div>
+      <!-- the 5 later-wave power-up pills are built dynamically into #powerups by HUD.init()
+           (BUFF_PILLS), one shared template instead of 5 more hand-written blocks here -->
+
     </div>
     <div class="hudtr">
       <div class="lbl">POINTS</div>
@@ -648,6 +651,11 @@ const CFG = {
   countMul: 1.25, speedMul: 1.05, hpMul: 1.15,
   ptsHit: 10, ptsKill: 100, ptsHead: 25,
   instaTime: 15, dblTime: 30,
+  // later-wave power-ups: squad-wide buffs, same model as insta/double -- one pickup arms it for
+  // everyone, since the host is the single authority damage/ammo/reload ultimately resolve through
+  noReloadTime: 20, infAmmoTime: 25, noDmgTime: 15, fastFireTime: 20, fastSpeedTime: 20,
+  fastFireMul: 1.8, fastSpeedMul: 1.35,
+  powerupWave: 6, // these 5 don't show up on the drop table before this wave
   pickupLife: 40,
   // coop: how long you bleed out on the sand, and what it costs a teammate to pick you back up
   downTime: 45, reviveTime: 3.5, reviveRange: 2.4, reviveHp: 0.4,
@@ -932,10 +940,21 @@ function genMuzzle() {
   for (let i = 0; i < 7; i++) { const a = i / 7 * TAU + .3, L = rnd(40, 62); g.beginPath(); g.moveTo(Math.cos(a + .25) * 6, Math.sin(a + .25) * 6); g.lineTo(Math.cos(a) * L, Math.sin(a) * L); g.lineTo(Math.cos(a - .25) * 6, Math.sin(a - .25) * 6); g.fill(); }
   return c;
 }
+// The four handmade icons (health/ammo/insta) stay bespoke; everything else -- double and the
+// five later-wave power-ups -- shares one generic circle-badge-plus-label look, just recolored.
+const ICON_BADGES = {
+  double: { color: '#ffe040', label: '2X' },
+  noreload: { color: '#3fd6ff', label: 'R∞' },
+  infammo: { color: '#d4ff3f', label: '∞' },
+  nodamage: { color: '#5dff9e', label: 'DEF' },
+  fastfire: { color: '#ff6a3f', label: 'RoF' },
+  fastspeed: { color: '#b43fff', label: '>>' }
+};
 function genIcon(type) {
   const S = 128, c = mkCanvas(S, S), g = c.getContext('2d');
   g.clearRect(0, 0, S, S);
-  const glow = { health: '#ff4040', ammo: '#ffb040', insta: '#ff2020', double: '#ffe040' }[type];
+  const badge = ICON_BADGES[type];
+  const glow = { health: '#ff4040', ammo: '#ffb040', insta: '#ff2020' }[type] || (badge && badge.color) || '#ffe040';
   g.shadowColor = glow; g.shadowBlur = 22;
   if (type === 'health') {
     g.fillStyle = '#fff'; roundRect(g, 22, 22, 84, 84, 16); g.fill();
@@ -955,10 +974,11 @@ function genIcon(type) {
     for (let i = 0; i < 4; i++) g.fillRect(48 + i * 9, 80, 4, 8);
     g.strokeStyle = '#ff3030'; g.lineWidth = 4; g.beginPath(); g.arc(64, 64, 50, 0, TAU); g.stroke();
   } else {
+    const b = badge || ICON_BADGES.double;
     g.fillStyle = '#1a1200'; g.beginPath(); g.arc(64, 64, 50, 0, TAU); g.fill();
-    g.shadowBlur = 0; g.fillStyle = '#ffe040'; g.font = 'bold 54px Impact, Arial Narrow, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText('2X', 64, 66);
-    g.strokeStyle = '#ffe040'; g.lineWidth = 4; g.beginPath(); g.arc(64, 64, 50, 0, TAU); g.stroke();
+    g.shadowBlur = 0; g.fillStyle = b.color; g.font = 'bold 42px Impact, Arial Narrow, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(b.label, 64, 66);
+    g.strokeStyle = b.color; g.lineWidth = 4; g.beginPath(); g.arc(64, 64, 50, 0, TAU); g.stroke();
   }
   return c;
 }
@@ -1007,7 +1027,8 @@ function buildTextures() {
   TEX.muzzle = mkTex(genMuzzle(), 0);
   TEX.glow = mkTex(genRadial(64, [[0, 'rgba(255,255,255,1)'], [.35, 'rgba(255,255,255,.55)'], [1, 'rgba(255,255,255,0)']]), 0);
   TEX.shadow = mkTex(genRadial(64, [[0, 'rgba(0,0,0,.55)'], [.6, 'rgba(0,0,0,.3)'], [1, 'rgba(0,0,0,0)']]), 0);
-  TEX.icons = { health: mkTex(genIcon('health'), 0), ammo: mkTex(genIcon('ammo'), 0), insta: mkTex(genIcon('insta'), 0), double: mkTex(genIcon('double'), 0) };
+  TEX.icons = {};
+  for (const k of ['health', 'ammo', 'insta', 'double', 'noreload', 'infammo', 'nodamage', 'fastfire', 'fastspeed']) TEX.icons[k] = mkTex(genIcon(k), 0);
   TEX.lowhpUrl = genLowHpOverlay();
 }
 
@@ -2527,7 +2548,11 @@ const Zombies = {
 /* ------------------------------------------------------------------ pickups (floating indicators) */
 const PICKUP_DEFS = {
   health: { color: 0xff4a4a, label: '+50 HP' }, ammo: { color: 0xffb040, label: 'AMMO' },
-  insta: { color: 0xff2a2a, label: 'INSTA-KILL' }, double: { color: 0xffe040, label: '2X POINTS' }
+  insta: { color: 0xff2a2a, label: 'INSTA-KILL' }, double: { color: 0xffe040, label: '2X POINTS' },
+  // later-wave only (CFG.powerupWave) -- see Director.spawnPickup
+  noreload: { color: 0x3fd6ff, label: 'NO RELOAD' }, infammo: { color: 0xd4ff3f, label: 'INFINITE AMMO' },
+  nodamage: { color: 0x5dff9e, label: 'NO DAMAGE' }, fastfire: { color: 0xff6a3f, label: 'RAPID FIRE' },
+  fastspeed: { color: 0xb43fff, label: 'FAST FEET' }
 };
 const Pickups = {
   pool: [],
@@ -2762,7 +2787,7 @@ const Player = {
       const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw), rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
       const mag = Math.min(1, Math.sqrt(mv.x * mv.x + mv.y * mv.y)); this.moveMag = lerp(this.moveMag, mag, Math.min(1, dt * 10));
       this.updateSprint(dt, mag);
-      const spd = this.speed * (this.sprinting ? CFG.sprintMul : 1);
+      const spd = this.speed * (this.sprinting ? CFG.sprintMul : 1) * (Game.fastSpeed > 0 ? CFG.fastSpeedMul : 1);
       const vx = (fx * mv.y + rx * mv.x) * spd, vz = (fz * mv.y + rz * mv.x) * spd;
       this.x += vx * dt; this.z += vz * dt;
       World.collide(this, CFG.playerR);
@@ -2893,9 +2918,10 @@ const Player = {
   tryFire() {
     const w = this.weapon(), def = w.def;
     if (this.reloading || this.switchT > 0 || this.cooldown > 0) { Input.consumeFireEdge(); return; }
-    if (w.mag <= 0) { Input.consumeFireEdge(); if (w.reserve > 0) this.reload(); else { Audio.empty(); this.cooldown = 0.25; HUD.toast('OUT OF AMMO — SWAP WEAPON'); } return; }
+    if (w.mag <= 0) { Input.consumeFireEdge(); if (w.reserve > 0 || Game.noReload > 0) this.reload(); else { Audio.empty(); this.cooldown = 0.25; HUD.toast('OUT OF AMMO — SWAP WEAPON'); } return; }
     Input.consumeFireEdge();
-    w.mag--; this.cooldown = 1 / def.rate; this.stats.shots++;
+    if (!(Game.infAmmo > 0)) w.mag--;
+    this.cooldown = 1 / (def.rate * (Game.fastFire > 0 ? CFG.fastFireMul : 1)); this.stats.shots++;
     this.recoil = def.recoil; Game.shake = Math.max(Game.shake, def.recoil * 0.22);
     const spread = (def.spread + this.bloom) * Math.PI / 180; if (def.bloom) this.bloom = Math.min(def.bloom, this.bloom + 0.45);
     const dir = this.eyeDir(this._dir), ey = this.eyeY();
@@ -2922,7 +2948,10 @@ const Player = {
   },
   reload() {
     const w = this.weapon(), def = w.def;
-    if (this.reloading || this.switchT > 0 || w.mag >= def.mag || w.reserve <= 0 || !this.alive) return;
+    if (this.reloading || this.switchT > 0 || w.mag >= def.mag || !this.alive) return;
+    // the gun is just always topped off instantly -- no animation, no reserve spent
+    if (Game.noReload > 0) { w.mag = def.mag; Audio.reload(def.id); HUD.dirty = true; return; }
+    if (w.reserve <= 0) return;
     this.reloading = true; this.reloadTotal = def.reload * this.char.reloadMul; this.reloadT = this.reloadTotal; Audio.reload(def.id); HUD.dirty = true;
   },
   finishReload() {
@@ -2960,6 +2989,7 @@ const Player = {
   },
   hurt(amount, fx, fz) {
     if (!this.alive || Game.state !== 'playing') return;
+    if (Game.noDmg > 0) { Particles.sparks(fx, 1.1, fz, 6); return; } // untouchable -- shrug it off with a spark, no hp lost
     this.hp -= amount; this.lastHurt = Game.time; Game.shake = Math.max(Game.shake, 0.9);
     Audio.hurt(); FX.damage(fx, fz); HUD.dirty = true;
     if (this.hp <= this.maxHp * 0.3 && !this.lowSaid) { this.lowSaid = true; Game.say('lowhp'); }
@@ -3107,12 +3137,21 @@ const FX = {
   }
 };
 
+// later-wave power-up pills (Game.<field> counts down from CFG.<field>Time): one shared template
+// element per buff, appended into #powerups by HUD.init() rather than 5 more hand-written <div>s.
+const BUFF_PILLS = [
+  { field: 'noReload', label: 'NO RELOAD', color: '#3fd6ff' },
+  { field: 'infAmmo', label: 'INFINITE AMMO', color: '#d4ff3f' },
+  { field: 'noDmg', label: 'NO DAMAGE', color: '#5dff9e' },
+  { field: 'fastFire', label: 'RAPID FIRE', color: '#ff6a3f' },
+  { field: 'fastSpeed', label: 'FAST FEET', color: '#b43fff' }
+];
 /* ------------------------------------------------------------------ DOM refs + HUD */
 const DOM = {};
 const HUD = {
   dirty: true, last: {}, toastT: 0, subT: 0, bannerT: 0,
   init() {
-    ['hud', 'controls', 'menu', 'pause', 'gameover', 'hpLabel', 'hpFill', 'hpNum', 'waveNum', 'zLeft', 'pillInsta', 'pillDbl', 'points', 'mult', 'kills', 'ammoMag', 'ammoRes', 'wpnName', 'reloadHint',
+    ['hud', 'controls', 'menu', 'pause', 'gameover', 'hpLabel', 'hpFill', 'hpNum', 'waveNum', 'zLeft', 'powerups', 'pillInsta', 'pillDbl', 'points', 'mult', 'kills', 'ammoMag', 'ammoRes', 'wpnName', 'reloadHint',
       'subtitle', 'subName', 'subText', 'banner', 'bannerTitle', 'bannerSub', 'toast', 'fpsTag', 'muzzle', 'dmg', 'lowhp', 'flashwhite', 'btnAuto', 'autoState', 'btnSprint', 'joyHint', 'rotateHint',
       'goWave', 'goPoints', 'goKills', 'goAcc', 'goHead', 'goTime', 'goBest', 'goTag', 'bestLine', 'optAuto', 'optVoice', 'optSound', 'optSens', 'sensVal', 'pOptAuto', 'pOptVoice', 'pOptSound', 'pOptSens', 'pSensVal', 'optCam', 'pOptCam', 'optSquad', 'pOptSquad', 'loadErr',
       'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
@@ -3121,6 +3160,12 @@ const HUD = {
       'boss', 'bossName', 'bossBar', 'pinned', 'pinnedSub', 'pinnedBar'
     ].forEach(id => DOM[id] = $(id));
     DOM.lowhp.style.backgroundImage = 'url(' + TEX.lowhpUrl + ')';
+    DOM.buffPills = {};
+    for (const b of BUFF_PILLS) {
+      const el = document.createElement('div');
+      el.className = 'pill'; el.style.borderColor = b.color; el.style.boxShadow = '0 0 10px ' + b.color;
+      DOM.powerups.appendChild(el); DOM.buffPills[b.field] = el;
+    }
   },
   set(key, el, text) { if (this.last[key] !== text) { this.last[key] = text; el.textContent = text; } },
   update(dt) {
@@ -3143,6 +3188,11 @@ const HUD = {
     if (ins) this.set('insT', DOM.pillInsta, 'INSTA-KILL ' + Math.ceil(G.insta) + 's');
     const dbl = G.dbl > 0; if (this.last.dbl !== dbl) { this.last.dbl = dbl; DOM.pillDbl.classList.toggle('on', dbl); DOM.mult.textContent = dbl ? '2X MULTIPLIER' : ''; }
     if (dbl) this.set('dblT', DOM.pillDbl, '2X POINTS ' + Math.ceil(G.dbl) + 's');
+    for (const b of BUFF_PILLS) {
+      const v = G[b.field] > 0, key = 'buf_' + b.field, el = DOM.buffPills[b.field];
+      if (this.last[key] !== v) { this.last[key] = v; el.classList.toggle('on', v); }
+      if (v) this.set(key + 'T', el, b.label + ' ' + Math.ceil(G[b.field]) + 's');
+    }
     // score
     this.set('pts', DOM.points, fmt(G.points));
     this.set('kills', DOM.kills, G.kills + (G.kills === 1 ? ' KILL' : ' KILLS'));
@@ -3791,6 +3841,7 @@ const Game = {
     for (const e of Explosions.pool) { e.on = false; e.fire.visible = e.ring.visible = false; } for (const l of Explosions.lights) l.intensity = 0;
     Player.reset(char); Input.reset();
     this.state = 'playing'; this.time = 0; this.matchTime = 0; this.wave = 0; this.points = 0; this.kills = 0; this.shake = 0; this.insta = 0; this.dbl = 0; this.timeScale = 1;
+    this.noReload = 0; this.infAmmo = 0; this.noDmg = 0; this.fastFire = 0; this.fastSpeed = 0;
     this.toSpawn = 0; this.waveActive = false; this.streak = 0; this.sayT = -99; this.deathK = 0; this.deathRoll = 0; this.chain.length = 0; this.pickupT = 15;
     Director.reset(); Bots.spawn();
     HUD.last = {}; HUD.dirty = true; HUD.showScreen(null); HUD.showHud(true); HUD.refreshOptions();
@@ -3885,7 +3936,14 @@ const Game = {
   spawnPickup() {
     let type; const r = Math.random(), hasGun = Player.weapons.some(w => w.owned && w.def.maxReserve !== Infinity);
     if (hasGun && Player.lowOnAmmo() && r < 0.5) type = 'ammo';
-    else if (r < 0.34) type = 'health'; else if (r < 0.62) type = hasGun ? 'ammo' : 'health'; else if (r < 0.82) type = 'insta'; else type = 'double';
+    else if (r < 0.34) type = 'health';
+    else if (r < 0.62) type = hasGun ? 'ammo' : 'health';
+    else {
+      // the power-up slot: insta/double are always in the mix; the 5 later-wave power-ups join
+      // at CFG.powerupWave so early runs (no guns worth buffing yet) aren't drowned in buffs
+      const pool = this.wave >= CFG.powerupWave ? POWERUP_POOL : ['insta', 'double'];
+      type = pool[Math.floor(Math.random() * pool.length)];
+    }
     if (World.coverPoint(Player.x, Player.z, this._pt)) Pickups.spawn(type, this._pt.x, this._pt.z);
   },
   // `by` is set when a coop teammate landed the shot — their client already drew the impact,
@@ -3969,6 +4027,13 @@ const Game = {
     else if (type === 'ammo') { P.refillAmmo(); Floaties.spawn(x, 1.6, z, 'AMMO REFILLED', '#ffb040', 20, 1.2); this.say('ammo'); HUD.toast('AMMO CRATE — RESERVE REFILLED'); }
     else if (type === 'insta') { this.insta = CFG.instaTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'INSTA-KILL!', '#ff3a3a', 22, 1.3); this.say('insta', true); HUD.toast('INSTA-KILL — ONE SHOT, ONE KILL', 2.5); }
     else if (type === 'double') { this.dbl = CFG.dblTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'DOUBLE POINTS!', '#ffe040', 22, 1.3); this.say('double', true); HUD.toast('DOUBLE POINTS — 30 SECONDS', 2.5); }
+    // later-wave power-ups: personal, same as health/ammo above -- whoever grabs it gets it,
+    // everyone else on the squad just sees the "TAKEN" pop (the `remote` branch above)
+    else if (type === 'noreload') { this.noReload = CFG.noReloadTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'NO RELOAD!', '#3fd6ff', 22, 1.3); HUD.toast('NO RELOAD — SWAP FREELY', 2.5); }
+    else if (type === 'infammo') { this.infAmmo = CFG.infAmmoTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'INFINITE AMMO!', '#d4ff3f', 22, 1.3); HUD.toast('INFINITE AMMO', 2.5); }
+    else if (type === 'nodamage') { this.noDmg = CFG.noDmgTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'NO DAMAGE!', '#5dff9e', 22, 1.3); HUD.toast('NO DAMAGE — YOU ARE UNTOUCHABLE', 2.5); }
+    else if (type === 'fastfire') { this.fastFire = CFG.fastFireTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'RAPID FIRE!', '#ff6a3f', 22, 1.3); HUD.toast('RAPID FIRE', 2.5); }
+    else if (type === 'fastspeed') { this.fastSpeed = CFG.fastSpeedTime; Audio.powerup(); Floaties.spawn(x, 1.6, z, 'FAST FEET!', '#b43fff', 22, 1.3); HUD.toast('FAST FEET', 2.5); }
     Particles.sparks(x, 1.2, z, 12); HUD.dirty = true;
   },
   recordBest() {
@@ -4040,6 +4105,8 @@ const Game = {
     }
     this.shake = Math.max(0, this.shake - dt * 3.2);
     if (this.insta > 0) this.insta -= dt; if (this.dbl > 0) this.dbl -= dt;
+    if (this.noReload > 0) this.noReload -= dt; if (this.infAmmo > 0) this.infAmmo -= dt;
+    if (this.noDmg > 0) this.noDmg -= dt; if (this.fastFire > 0) this.fastFire -= dt; if (this.fastSpeed > 0) this.fastSpeed -= dt;
     // waves
     if (this.state === 'playing') {
       if (Net.isClient()) { /* the host owns waves, spawning and pickups — we just render them */ }
@@ -4239,7 +4306,10 @@ const NET = { PREFIX: 'dnd/1/', VER: 1, MAX: 4, SNAP: 1 / 12, INPUT: 1 / 15, BEA
 // reordering makes an older client read a hunter as a walker, or `attack` as `dead`.
 const ZSTATE = ['emerge', 'chase', 'attack', 'dead', 'crouch', 'pounce', 'pin'];
 const ZTYPE_LIST = ['walker', 'runner', 'brute', 'hunter', 'tank'];
-const PU_LIST = ['health', 'ammo', 'insta', 'double'];
+// append-only: index is what goes over the wire (Net 'pk'/full-state pickup slots), so existing
+// entries must keep their position
+const PU_LIST = ['health', 'ammo', 'insta', 'double', 'noreload', 'infammo', 'nodamage', 'fastfire', 'fastspeed'];
+const POWERUP_POOL = ['insta', 'double', 'noreload', 'infammo', 'nodamage', 'fastfire', 'fastspeed'];
 const r2 = (v) => Math.round(v * 100) / 100;
 
 /* ------------------------------------------------------------------ pause beacon
@@ -4756,8 +4826,13 @@ const Net = {
   },
   peerCollect(peer, type, x, z) {
     this.send({ k: 'pk', t: PU_LIST.indexOf(type), x: r2(x), z: r2(z), by: peer.id });
+    // insta/double gate damage resolution, which only the host ever runs, so the host's own Game
+    // needs the timer regardless of who grabbed it. The 5 later-wave power-ups are personal --
+    // reload/ammo/damage/rate-of-fire/speed are each simulated locally by whoever picked it up,
+    // so only that peer's own client (via the 'pk' broadcast above) should arm the timer.
     if (type === 'insta') { Game.insta = CFG.instaTime; Audio.powerup(); HUD.toast('INSTA-KILL — ' + peer.name + ' GRABBED IT', 2.5); }
     else if (type === 'double') { Game.dbl = CFG.dblTime; Audio.powerup(); HUD.toast('DOUBLE POINTS — ' + peer.name + ' GRABBED IT', 2.5); }
+    else if (PICKUP_DEFS[type]) HUD.toast(PICKUP_DEFS[type].label + ' — ' + peer.name + ' GRABBED IT', 2.5);
     Particles.sparks(x, 1.2, z, 12);
     Floaties.spawn(x, 1.7, z, peer.name, '#ffd8a0', 15, 1.0);
   },
