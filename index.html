@@ -135,8 +135,6 @@ button{font-family:inherit;color:inherit;}
 #btnFire .ring{position:absolute;inset:-9px;border-radius:50%;border:2px solid rgba(255,255,255,.18);pointer-events:none;}
 #btnReload{width:58px;height:58px;right:calc(134px + var(--sar));bottom:calc(26px + var(--sab));font-size:12px;}
 #btnSwitch{width:56px;height:56px;right:calc(24px + var(--sar));bottom:calc(136px + var(--sab));font-size:12px;}
-/* HEAVY stacks directly above LIGHT (same column) -- 14px clear of it either way */
-#btnSwitch2{width:56px;height:56px;right:calc(24px + var(--sar));bottom:calc(206px + var(--sab));font-size:12px;}
 /* AUTO lives up in the corner beside PAUSE: it is a toggle you touch between waves, and down in
    the thumb cluster it kept getting hit by accident while firing. */
 #btnAuto{width:44px;height:44px;right:calc(60px + var(--sar));top:calc(10px + var(--sat));font-size:10px;border-color:rgba(255,255,255,.35);box-shadow:none;}
@@ -258,7 +256,6 @@ h1.title em{font-style:normal;color:var(--accent2);}
   #btnFire{width:78px;height:78px;bottom:calc(12px + var(--sab));right:calc(14px + var(--sar));}
   #btnReload{width:50px;height:50px;right:calc(116px + var(--sar));bottom:calc(16px + var(--sab));}
   #btnSwitch{width:46px;height:46px;right:calc(16px + var(--sar));bottom:calc(112px + var(--sab));}
-  #btnSwitch2{width:46px;height:46px;right:calc(16px + var(--sar));bottom:calc(172px + var(--sab));}
   #btnAuto{width:40px;height:40px;right:calc(64px + var(--sar));top:calc(10px + var(--sat));}
   #btnView{width:40px;height:40px;right:calc(114px + var(--sar));top:calc(10px + var(--sat));}
   #btnSprint{width:50px;height:50px;right:calc(88px + var(--sar));bottom:calc(100px + var(--sab));}
@@ -434,8 +431,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
     <div id="joyKnob"></div>
     <div id="btnAuto" class="tbtn">AUTO<small id="autoState">OFF</small></div>
     <div id="btnView" class="tbtn">VIEW<small id="viewState">1ST</small></div>
-    <div id="btnSwitch" class="tbtn">LIGHT<small>WEAPON</small></div>
-    <div id="btnSwitch2" class="tbtn">HEAVY<small>WEAPON</small></div>
+    <div id="btnSwitch" class="tbtn">SWAP<small>WEAPON</small></div>
     <div id="btnReload" class="tbtn">RELOAD</div>
     <div id="btnSprint" class="tbtn"><span class="meter"></span>SPRINT</div>
     <div id="btnFire" class="tbtn"><span class="ring"></span>FIRE</div>
@@ -517,9 +513,9 @@ h1.title em{font-style:normal;color:var(--accent2);}
       </div>
       <div class="best" id="bestLine"></div>
       <div class="help">
-        <b>Touch:</b> left side = move (joystick) · right side = swipe to look · FIRE button (drag it to aim while shooting) · SPRINT for a burst of speed · LIGHT/HEAVY WEAPON buttons swap within each loadout. Pause → MOVE BUTTONS to drag the controls where your thumbs want them.<br>
-        <b>Desktop:</b> WASD move · Shift sprint · mouse look · click fire · R reload · Q/E swap light/heavy · 1-9 select a weapon directly · V camera · Esc pause.<br>
-        11 weapons to unlock across the run, in two loadouts: light (pistol → uzi → dual uzis → flamethrower → chain lightning gun) and heavy (shotgun → rifle → dual shotguns → grenade launcher → sniper rifle → dual rifles). Shoot the red barrels. Grab the glowing drops.
+        <b>Touch:</b> left side = move (joystick) · right side = swipe to look · FIRE button (drag it to aim while shooting) · SPRINT for a burst of speed · SWAP WEAPON cycles through whatever you've unlocked so far. Pause → MOVE BUTTONS to drag the controls where your thumbs want them.<br>
+        <b>Desktop:</b> WASD move · Shift sprint · mouse look · click fire · R reload · Q/E swap weapon · 1-9 select a weapon directly · V camera · Esc pause.<br>
+        11 weapons to unlock across the run (pistol → shotgun → uzi → rifle → dual shotguns → dual uzis → flamethrower → chain lightning gun → grenade launcher → sniper rifle → dual rifles). Shoot the red barrels. Grab the glowing drops.
       </div>
       <div class="help" id="verLine" style="opacity:.5"></div>
     </div></div>
@@ -718,7 +714,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.7.2';
+const GAME_VERSION = 'ZB-1.8.0';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -1403,11 +1399,11 @@ const Input = {
   fireId: null, fireLX: 0, fireLY: 0,
   sens: 1.0, R: 58,
   touchSeen: false, pointerLocked: false, mouseDown: false,
-  on: { reload() { }, swapLight() { }, swapHeavy() { }, auto() { }, pause() { }, select() { }, sprint() { }, camera() { }, any() { } },
+  on: { reload() { }, swap() { }, auto() { }, pause() { }, select() { }, sprint() { }, camera() { }, any() { } },
   el: {},
   init() {
     const el = this.el;
-    ['touchLayer', 'joyBase', 'joyKnob', 'joyHint', 'btnFire', 'btnReload', 'btnSwitch', 'btnSwitch2', 'btnAuto', 'btnView', 'btnSprint', 'btnPause', 'c'].forEach(id => el[id] = $(id));
+    ['touchLayer', 'joyBase', 'joyKnob', 'joyHint', 'btnFire', 'btnReload', 'btnSwitch', 'btnAuto', 'btnView', 'btnSprint', 'btnPause', 'c'].forEach(id => el[id] = $(id));
     const self = this, opt = { passive: false };
     const layer = el.touchLayer;
     layer.addEventListener('touchstart', function (e) { e.preventDefault(); self.touchSeen = true; self.on.any(); for (const t of e.changedTouches) self.touchBegin(t); }, opt);
@@ -1439,8 +1435,7 @@ const Input = {
       b.addEventListener('click', function (e) { e.preventDefault(); if (Layout.editing) return; self.on.any(); fn(); });
     };
     tap(el.btnReload, () => self.on.reload());
-    tap(el.btnSwitch, () => self.on.swapLight());
-    tap(el.btnSwitch2, () => self.on.swapHeavy());
+    tap(el.btnSwitch, () => self.on.swap());
     tap(el.btnAuto, () => self.on.auto());
     tap(el.btnView, () => self.on.camera());
     tap(el.btnSprint, () => self.on.sprint());
@@ -1449,8 +1444,7 @@ const Input = {
     window.addEventListener('keydown', function (e) {
       if (e.repeat) return; self.keys[e.code] = true; self.on.any();
       if (e.code === 'KeyR') self.on.reload();
-      else if (e.code === 'KeyQ') self.on.swapLight();
-      else if (e.code === 'KeyE') self.on.swapHeavy();
+      else if (e.code === 'KeyQ' || e.code === 'KeyE') self.on.swap();
       else if (e.code === 'KeyT') self.on.auto();
       else if (e.code === 'KeyV') self.on.camera();
       else if (e.code === 'Escape' || e.code === 'KeyP') self.on.pause();
@@ -1532,7 +1526,7 @@ const Input = {
    button centre, which keeps them sane across a rotate or a different phone. */
 const Layout = {
   KEY: 'dnd_layout_v1',
-  ids: ['btnFire', 'btnReload', 'btnSwitch', 'btnSwitch2', 'btnAuto', 'btnView', 'btnSprint'],
+  ids: ['btnFire', 'btnReload', 'btnSwitch', 'btnAuto', 'btnView', 'btnSprint'],
   pos: {}, editing: false, drag: null, els: {}, bar: null,
   init() {
     for (const id of this.ids) this.els[id] = $(id);
@@ -2901,8 +2895,9 @@ const Explosions = {
 };
 
 /* ------------------------------------------------------------------ weapons
-   `cat` ('light'/'heavy') is which of the two swap buttons cycles through it (see
-   Player.swapLight/swapHeavy). `base` picks the viewmodel chassis buildGun() reuses --
+   `cat` ('light'/'heavy') is unused now that SWAP WEAPON (Player.swap) cycles every owned
+   weapon in one list -- left on each entry as descriptive metadata, not dead weight worth
+   stripping. `base` picks the viewmodel chassis buildGun() reuses --
    'special' is the shared chassis for the four gimmick guns (flamethrower/chainlightning/
    grenadelauncher/sniper), each told apart by SPECIAL_TINT + one accessory piece rather than
    a full bespoke model. `dual` wraps that chassis into a mirrored pair (see buildGun) and, for
@@ -3323,20 +3318,16 @@ const Player = {
     this.cur = i; this.reloading = false; this.switchT = 0.42; this.bloom = 0;
     this.vm.models.forEach((m, k) => m.visible = k === i); Audio.reload('pistol'); HUD.dirty = true;
   },
-  // two swap buttons instead of one big cycle: LIGHT hops between pistol/uzi/dual uzi/flamethrower/
-  // chain lightning, HEAVY between shotgun/rifle/dual shotgun/grenade launcher/sniper/dual rifle
-  // (see WEAPONS' `cat`). Each only ever cycles within its own list, skipping unowned entries,
-  // same wrap-around shape the old single swap() had.
-  swapCat(cat) {
-    const list = this.weapons.filter(w => w.def.cat === cat); if (!list.length) return;
-    const curIx = list.indexOf(this.weapon());
+  // One button, one cycle: hops to the next weapon that's actually been unlocked this run yet
+  // (light and heavy mixed together in WEAPONS' own order), skipping anything still unowned, and
+  // wrapping back around to the pistol if it runs off the end.
+  swap() {
+    const list = this.weapons; if (!list.length) return;
     for (let k = 1; k <= list.length; k++) {
-      const w = list[(curIx + k + list.length) % list.length];
-      if (w.owned) { this.switchTo(this.weapons.indexOf(w)); return; }
+      const i = (this.cur + k) % list.length;
+      if (list[i].owned) { this.switchTo(i); return; }
     }
   },
-  swapLight() { this.swapCat('light'); },
-  swapHeavy() { this.swapCat('heavy'); },
   unlock(i) { const w = this.weapons[i]; if (w.owned) return false; w.owned = true; w.mag = w.def.mag; w.reserve = w.def.reserve; this.switchTo(i); return true; },
   // between-wave resupply so the heavier guns stay usable without a lucky crate
   resupply(frac) {
@@ -4179,8 +4170,7 @@ const Game = {
     document.addEventListener('click', tryLockLandscape, { passive: true, once: true });
     Input.on.any = function () { if (!Audio.ready) Audio.unlock(); else Audio.resume(); };
     Input.on.reload = function () { if (self.state === 'playing') Player.reload(); };
-    Input.on.swapLight = function () { if (self.state === 'playing') Player.swapLight(); };
-    Input.on.swapHeavy = function () { if (self.state === 'playing') Player.swapHeavy(); };
+    Input.on.swap = function () { if (self.state === 'playing') Player.swap(); };
     Input.on.select = function (i) { if (self.state === 'playing') Player.switchTo(i); };
     Input.on.auto = function () { self.autoFire = !self.autoFire; HUD.refreshOptions(); HUD.toast('AUTO-FIRE ' + (self.autoFire ? 'ON' : 'OFF')); };
     Input.on.sprint = function () { if (self.state === 'playing') Player.toggleSprint(); };
@@ -4883,7 +4873,8 @@ const NET = {
   PREFIX: 'dnd/1/', VER: 1, MAX: 8, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6,
   LOBBY_MAX: 300,     // auto-starts the run after 5 minutes of waiting, so a lobby can't sit forever
   LOBBY_MIN: 10,      // instant-start is locked out for the first 10s so a solo host can't be sniped mid-load
-  VOTE_TIMEOUT: 20     // an instant-start vote that isn't unanimous within 20s cancels itself
+  VOTE_TIMEOUT: 20,    // an instant-start vote that isn't unanimous within 20s cancels itself
+  ROSTER: 4            // how often the host re-broadcasts the full roster during a run, as a self-heal
 };
 // APPEND-ONLY. Both arrays are the wire format: snapshots pack the index, so inserting or
 // reordering makes an older client read a hunter as a walker, or `attack` as `dead`.
@@ -4932,7 +4923,7 @@ const Net = {
   peers: {},                   // id -> peer record (everyone but me)
   started: false, inRoom: false, joining: false, joinT: 0, seed: 0,
   rooms: {}, browsing: false,
-  tSnap: 0, tInput: 0, tBeacon: 0, lastRecv: 0,
+  tSnap: 0, tInput: 0, tBeacon: 0, tRoster: 0, lastRecv: 0,
   reviveTarget: null, reviveT: 0, wipeSent: false, selfBeacon: null,
   clock: 0, _roomsT: 0, _v: null,      // clock runs in menus too, unlike Game.time
   // two independent players can each land on a different one of Mqtt's 3 public relays on a
@@ -5090,13 +5081,18 @@ const Net = {
         peer = this.mkPeer(id, m.n, ch); this.peers[id] = peer;
         HUD.toast(peer.name + ' JOINED', 2.6); Audio.ding();
         this.refreshLobby(); this.beacon();
+        // Everyone already connected needs to learn about a brand-new peer too, not just other
+        // people still sitting in the lobby -- this used to only fire pre-run (the `else` below),
+        // so joining mid-run left already-playing clients with no roster entry for the newcomer at
+        // all until their next snapshot row created one from scratch with a guessed name/avatar
+        // (see the 'SURVIVOR'/'male' fallback in applySnapshot) that nothing ever corrected back.
+        this.send({ k: 'roster', roster: this.roster() });
       }
       peer.last = this.clock;
       // `ch` tells the joiner which color they actually got -- may differ from what they asked
       // for if it was already taken (see pickAvatarFor)
       this.send({ k: 'welcome', to: id, h: this.id, seed: this.seed, host: this.displayName(), st: this.started ? 'playing' : 'lobby', roster: this.roster(), ch: peer.char, lt: this.started ? undefined : Math.ceil(this.lobbyCountdown) });
       if (this.started) this.send({ k: 'go', to: id, seed: this.seed });
-      else this.send({ k: 'roster', roster: this.roster() });   // everyone already waiting needs the update
       return;
     }
     const peer = this.peers[id]; if (!peer) return;
@@ -5402,6 +5398,14 @@ const Net = {
     if (this.mode === 'host') {
       this.tSnap -= dt;
       if (this.tSnap <= 0) { this.tSnap = NET.SNAP; this.sendSnapshot(); }
+      // A one-time roster broadcast can still get lost -- a client on a momentarily mismatched
+      // relay, ordinary packet loss, whatever. Snapshots alone can't recover from that: an id a
+      // client has never seen a roster entry for gets silently guessed into existence (name
+      // 'SURVIVOR', default avatar) instead of skipped, and nothing ever corrected it before this.
+      // Re-sending the full roster every few seconds means that guess is wrong for at most a few
+      // seconds, on any number of players, instead of for the rest of the match.
+      this.tRoster -= dt;
+      if (this.tRoster <= 0) { this.tRoster = NET.ROSTER; this.send({ k: 'roster', roster: this.roster() }); }
       this.checkTeamWipe();
     } else {
       this.tInput -= dt;
@@ -5583,8 +5587,15 @@ const Net = {
   },
 
   /* ---------------- remote avatars ---------------- */
+  // A peer's model+label is built once and cached on peer.vis -- but peer.char/peer.name can
+  // legitimately change out from under an already-built peer (a roster correction arriving after
+  // an earlier snapshot had to guess at an unknown id, see applySnapshot's 'SURVIVOR'/'male'
+  // fallback and the periodic roster re-broadcast above). Without this check that correction was
+  // silent: the data was right, but whatever avatar/name got guessed first stayed on screen for
+  // everyone looking at that peer for the rest of the match.
   ensureAvatar(peer) {
-    if (peer.vis) return peer.vis;
+    if (peer.vis && peer.vis._char === peer.char && peer.vis._name === peer.name) return peer.vis;
+    if (peer.vis) this.killAvatar(peer);
     const av = AVATARS[peer.char];
     const accent = av ? av.accent : 0xff7a1a;
     // the champion model loads async — this wrapper goes up immediately (empty) so position,
@@ -5597,6 +5608,7 @@ const Net = {
     shadow.rotation.x = -Math.PI / 2; R.scene.add(shadow);
     const label = this.mkLabel(peer.name, accent); R.scene.add(label);
     m.shadow = shadow; m.label = label; m.anim = 0; m.beacon = Beacon.make(accent);
+    m._char = peer.char; m._name = peer.name;
     peer.vis = m;
     Avatars.spawn(peer.char).then(body => {
       if (peer.vis !== m) { R.scene.remove(body.g); return; } // peer left/rejoined before this landed
