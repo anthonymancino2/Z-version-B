@@ -210,6 +210,8 @@ h1.title em{font-style:normal;color:var(--accent2);}
   transition:transform .1s;}
 .bigbtn:active{transform:scale(.97);}
 .bigbtn.secondary{background:rgba(0,0,0,.45);border-color:rgba(255,255,255,.35);box-shadow:none;font-size:16px;padding:10px 20px;}
+.bigbtn:disabled{opacity:.4;cursor:default;filter:grayscale(.6);transform:none;}
+#lobbyStartHint{font-size:.55em;letter-spacing:.1em;opacity:.85;vertical-align:middle;}
 .help{font-size:11px;color:var(--dim);margin-top:12px;line-height:1.5;letter-spacing:.04em;}
 .help b{color:var(--sand);font-weight:600;}
 .best{font-family:var(--hud-font);font-size:12px;letter-spacing:.2em;color:#ffd83b;margin-top:10px;text-shadow:0 0 8px rgba(255,216,59,.5);}
@@ -279,6 +281,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
   font-size:15px;letter-spacing:.14em;padding:9px 12px;width:200px;text-align:center;-webkit-user-select:text;user-select:text;}
 .netinput:focus{outline:none;border-color:var(--accent2);box-shadow:0 0 14px var(--glow);}
 .netinput.code{width:130px;text-transform:uppercase;font-size:20px;letter-spacing:.3em;}
+.netinput.invalid{border-color:#ff4444;box-shadow:0 0 14px rgba(255,68,68,.6);animation:pinshake .3s linear 2;}
 #netStatus{font-family:var(--hud-font);font-size:11px;letter-spacing:.2em;margin:8px 0 2px;color:var(--dim);min-height:14px;}
 #netStatus.ok{color:#5dff7a;} #netStatus.bad{color:var(--danger);} #netStatus.busy{color:var(--accent2);}
 
@@ -302,8 +305,31 @@ h1.title em{font-style:normal;color:var(--accent2);}
 .pent .pr{font-family:var(--hud-font);font-size:10px;letter-spacing:.2em;color:var(--dim);}
 .codebig{font-family:var(--hud-font);font-size:clamp(30px,8vw,54px);letter-spacing:.34em;color:var(--accent2);text-shadow:0 0 24px var(--glow);margin:2px 0 0;padding-left:.34em;}
 
+#lobbyCountdown{font-size:clamp(20px,4.4vw,30px);letter-spacing:.24em;}
+/* styled like a popup even though it's inline in the lobby panel -- everyone waiting on a start
+   vote is already looking at this screen, so there's no need for a separate overlay layer */
+#lobbyVote{display:none;margin:14px auto 4px;max-width:420px;background:rgba(22,11,6,.75);border:1px solid rgba(255,216,59,.4);
+  border-radius:12px;padding:14px 16px;box-shadow:0 0 24px rgba(255,216,59,.15);}
+#lobbyVote.show{display:block;}
+.lvtxt{font-family:var(--hud-font);font-size:15px;letter-spacing:.1em;color:#ffd83b;text-shadow:0 0 10px rgba(255,216,59,.5);}
+.lvsub{font-family:var(--hud-font);font-size:11px;letter-spacing:.18em;color:var(--dim);margin-top:5px;}
+#lobbyVote .row{margin-top:10px;}
+
+/* enemy radar -- rotates with the player (forward is always "up") rather than a fixed north-up
+   map, so it sits beside the teammate strip instead of above it: same top offset as before,
+   #coop just shifted right to make room. */
+#radar{position:absolute;left:calc(12px + var(--sal));top:calc(78px + var(--sat));width:84px;height:84px;
+  border-radius:50%;background:radial-gradient(circle at 50% 50%,rgba(20,32,16,.7),rgba(6,10,5,.8));
+  border:1px solid rgba(120,255,120,.35);box-shadow:0 0 10px rgba(0,0,0,.5) inset;pointer-events:none;overflow:hidden;}
+#radar .rself{position:absolute;left:50%;top:50%;width:0;height:0;
+  border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #5dff7a;
+  transform:translate(-50%,-70%);filter:drop-shadow(0 0 3px rgba(93,255,122,.85));}
+#radar .rblip{position:absolute;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;
+  background:#ff3b3b;box-shadow:0 0 5px rgba(255,59,59,.9);}
+#radar .rblip.big{width:9px;height:9px;margin:-4.5px 0 0 -4.5px;background:#ff8a3a;box-shadow:0 0 7px rgba(255,138,58,.95);}
+
 /* teammate strip in the HUD */
-#coop{position:absolute;left:calc(12px + var(--sal));top:calc(96px + var(--sat));display:none;flex-direction:column;gap:5px;pointer-events:none;}
+#coop{position:absolute;left:calc(106px + var(--sal));top:calc(96px + var(--sat));display:none;flex-direction:column;gap:5px;pointer-events:none;}
 #coop.show{display:flex;}
 .mate{background:rgba(12,6,3,.6);border:1px solid rgba(255,255,255,.13);border-radius:7px;padding:4px 8px;min-width:132px;}
 .mate .mn{font-family:var(--hud-font);font-size:11px;letter-spacing:.14em;color:var(--sand);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:132px;}
@@ -314,8 +340,11 @@ h1.title em{font-style:normal;color:var(--accent2);}
 .mate.down .mb i{background:var(--danger);}
 .mate.gone{opacity:.4;}
 
-#netPill{position:absolute;right:calc(12px + var(--sar));bottom:calc(10px + var(--sab));font-family:var(--hud-font);font-size:10px;letter-spacing:.16em;
-  color:var(--dim);background:rgba(12,6,3,.6);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:3px 9px;pointer-events:none;display:none;}
+/* anchored under the POINTS/KILLS column (.hudtr) rather than the old bottom-right corner --
+   that spot sat right on top of the ammo readout and the mobile fire/reload buttons, which is
+   exactly why "what room am I in" kept coming up despite this already being on screen */
+#netPill{position:absolute;right:calc(112px + var(--sar));top:calc(90px + var(--sat));font-family:var(--hud-font);font-size:11px;letter-spacing:.14em;
+  color:#fff;background:rgba(12,6,3,.65);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:4px 10px;pointer-events:none;display:none;text-align:right;}
 #netPill.show{display:block;}
 #netPill.bad{color:var(--danger);border-color:rgba(255,59,59,.4);}
 
@@ -361,7 +390,8 @@ h1.title em{font-style:normal;color:var(--accent2);}
 .subhead{font-family:var(--hud-font);font-size:11px;letter-spacing:.28em;color:var(--dim);margin:16px 0 6px;text-align:center;}
 
 @media (max-height:440px){
-  #coop{top:calc(70px + var(--sat));}
+  #radar{left:calc(10px + var(--sal));top:calc(62px + var(--sat));width:66px;height:66px;}
+  #coop{top:calc(70px + var(--sat));left:calc(84px + var(--sal));}
   .mate{padding:3px 6px;min-width:110px;}
   .mate .mn{font-size:10px;max-width:110px;}
   #boss{top:calc(100px + var(--sat));width:min(38vw,260px);}
@@ -437,6 +467,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
     <div id="subtitle"><b id="subName">HANK</b><span id="subText"></span></div>
     <div id="banner"><div id="bannerTitle">WAVE 1</div><div id="bannerSub">THEY'RE COMING</div></div>
     <div id="toast"></div>
+    <div id="radar"><div class="rself"></div></div>
     <div id="coop"></div>
     <div id="downed"><div class="dt">YOU ARE DOWN</div><div class="ds" id="downedSub">HOLD ON — A TEAMMATE CAN REVIVE YOU</div><div class="dbar"><i id="downedBar"></i></div></div>
     <div id="revive"><div class="rt" id="reviveText">REVIVING</div><div class="rbar"><i id="reviveBar"></i></div></div>
@@ -451,6 +482,10 @@ h1.title em{font-style:normal;color:var(--accent2);}
     <div class="scroll"><div class="panel">
       <h1 class="title">DUST <em>&amp;</em> DEAD</h1>
       <div class="tag">DESERT ARENA SURVIVAL</div>
+      <div class="netfield" id="menuNameField">
+        <label for="inpNameMenu">YOUR NAME</label>
+        <input class="netinput" id="inpNameMenu" maxlength="14" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="SURVIVOR">
+      </div>
       <div class="cardgroup">A</div>
       <div class="cards" id="cardsMale"></div>
       <div class="cardgroup">B</div>
@@ -564,8 +599,17 @@ h1.title em{font-style:normal;color:var(--accent2);}
       <div class="help" id="lobbyHint" style="margin-top:6px">Share this code &mdash; or your friends can pick the run out of the list.</div>
       <div class="plist" id="lobbyPlayers"></div>
       <div id="lobbyStatus" class="best"></div>
+      <div class="tag" id="lobbyCountdown">STARTS IN 5:00</div>
+      <div id="lobbyVote">
+        <div class="lvtxt" id="lobbyVoteText">SOMEONE WANTS TO START NOW</div>
+        <div class="lvsub" id="lobbyVoteSub">0/0 CONFIRMED</div>
+        <div class="row">
+          <button class="bigbtn" id="btnVoteYes">CONFIRM</button>
+          <button class="bigbtn secondary" id="btnVoteNo">NOT YET</button>
+        </div>
+      </div>
       <div class="row">
-        <button class="bigbtn" id="btnLobbyStart">START THE RUN</button>
+        <button class="bigbtn" id="btnLobbyStart">INSTANT START <span id="lobbyStartHint"></span></button>
         <button class="bigbtn secondary" id="btnLobbyLeave">LEAVE</button>
       </div>
     </div></div>
@@ -665,7 +709,7 @@ function makeArmGeo(w, h, d) {
 const $ = (id) => document.getElementById(id);
 
 /* ------------------------------------------------------------------ config */
-const GAME_VERSION = 'ZB-1.4.0';
+const GAME_VERSION = 'ZB-1.7.0';
 const CFG = {
   // Round 1 starts back at the ORIGINAL Z version B map size/density (arenaR0) instead of the old
   // permanently-4x'd arena -- that 4x-from-the-start map was the "too slow of a start" problem.
@@ -2520,6 +2564,7 @@ class Zombie {
       if (this.t > 1.1) { this.state = 'chase'; this.y = 0; }
       this.animT += dt * 2;
     } else if (st === 'chase' || st === 'attack') {
+      if (Net.isHost()) Net.touchInvisible(this, dt);
       const dx = P.x - this.x, dz = P.z - this.z, d = Math.sqrt(dx * dx + dz * dz);
       if (st === 'chase') {
         if (this.cool > 0) this.cool -= dt;
@@ -3461,8 +3506,9 @@ const HUD = {
     ['hud', 'controls', 'menu', 'pause', 'gameover', 'hpLabel', 'hpFill', 'hpNum', 'waveNum', 'zLeft', 'powerups', 'pillInsta', 'pillDbl', 'points', 'mult', 'kills', 'ammoMag', 'ammoRes', 'wpnName', 'reloadHint',
       'subtitle', 'subName', 'subText', 'banner', 'bannerTitle', 'bannerSub', 'toast', 'fpsTag', 'muzzle', 'dmg', 'lowhp', 'flashwhite', 'btnAuto', 'autoState', 'btnView', 'viewState', 'btnSprint', 'joyHint', 'portraitBlock',
       'goWave', 'goPoints', 'goKills', 'goAcc', 'goHead', 'goTime', 'goBest', 'goTag', 'bestLine', 'optAuto', 'optVoice', 'optSound', 'optSens', 'sensVal', 'pOptAuto', 'pOptVoice', 'pOptSound', 'pOptSens', 'pSensVal', 'optCam', 'pOptCam', 'optSquad', 'pOptSquad', 'loadErr',
-      'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
+      'radar', 'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpNameMenu', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
       'btnLeaders', 'btnLeadersBack', 'btnLobbyStart', 'btnLobbyLeave', 'lobbyCode', 'lobbyPlayers', 'lobbyStatus', 'lobbyHint',
+      'lobbyCountdown', 'lobbyStartHint', 'lobbyVote', 'lobbyVoteText', 'lobbyVoteSub', 'btnVoteYes', 'btnVoteNo',
       'coop', 'netPill', 'downed', 'downedBar', 'downedSub', 'revive', 'reviveText', 'reviveBar', 'lbWrap', 'lbStatus', 'goCoop', 'goRoom',
       'boss', 'bossName', 'bossBar', 'pinned', 'pinnedSub', 'pinnedBar', 'btnSync', 'pBtnSync'
     ].forEach(id => DOM[id] = $(id));
@@ -3473,8 +3519,39 @@ const HUD = {
       el.className = 'pill'; el.style.borderColor = b.color; el.style.boxShadow = '0 0 10px ' + b.color;
       DOM.powerups.appendChild(el); DOM.buffPills[b.field] = el;
     }
+    this.radarDots = []; this.radarPX = 0;
   },
   set(key, el, text) { if (this.last[key] !== text) { this.last[key] = text; el.textContent = text; } },
+  // Player-relative radar: "up" on the dial is always wherever the player is currently facing,
+  // so it rotates as they turn rather than staying north-up. eyeDir() defines forward as
+  // (-sin(yaw), -cos(yaw)); right is that same vector turned -90 deg, giving (cos(yaw), -sin(yaw)).
+  // Getting that right vector's sign backwards is exactly the bug that put enemies on the wrong
+  // side of a radar before (a full left-right mirror, not just a rotation error) -- so this reuses
+  // eyeDir's own convention instead of re-deriving bearing math from scratch.
+  updateRadar() {
+    const rootEl = DOM.radar; if (!rootEl) return;
+    if (!this.radarPX || this.last.radarSize !== rootEl.clientWidth) {
+      this.last.radarSize = rootEl.clientWidth; this.radarPX = rootEl.clientWidth / 2 - 5;
+    }
+    const P = Player, yaw = P.yaw;
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    const RANGE = 32, PX = this.radarPX, dots = this.radarDots;
+    let n = 0;
+    for (const z of Zombies.pool) {
+      if (!z.on || z.state === 'dead') continue;
+      const dx = z.x - P.x, dz = z.z - P.z;
+      const dist = Math.sqrt(dx * dx + dz * dz) || 0.0001;
+      const ux = (dx * rx + dz * rz) / dist, uy = -(dx * fx + dz * fz) / dist;
+      const r = PX * Math.min(1, dist / RANGE);
+      let dot = dots[n];
+      if (!dot) { dot = document.createElement('div'); dot.className = 'rblip'; rootEl.appendChild(dot); dots[n] = dot; }
+      dot.style.left = (PX + 5 + ux * r) + 'px'; dot.style.top = (PX + 5 + uy * r) + 'px';
+      dot.classList.toggle('big', !!(z.big || z.boss));
+      dot.style.display = 'block';
+      n++; if (n >= 60) break;
+    }
+    for (let i = n; i < dots.length; i++) dots[i].style.display = 'none';
+  },
   update(dt) {
     const P = Player, G = Game;
     if (this.toastT > 0) { this.toastT -= dt; if (this.toastT <= 0) DOM.toast.classList.remove('show'); }
@@ -3532,6 +3609,7 @@ const HUD = {
       const ek = Math.round(clamp(P.escape, 0, 1) * 50) / 50;
       if (this.last.esc !== ek) { this.last.esc = ek; DOM.pinnedBar.style.transform = 'scaleX(' + ek.toFixed(2) + ')'; }
     }
+    this.updateRadar();
   },
   toast(msg, dur) { DOM.toast.textContent = msg; DOM.toast.classList.add('show'); this.toastT = dur || 2.2; },
   banner(title, sub, long) {
@@ -3539,7 +3617,26 @@ const HUD = {
     DOM.banner.classList.remove('show', 'showlong'); void DOM.banner.offsetWidth; DOM.banner.classList.add(long ? 'showlong' : 'show');
   },
   subtitle(name, text) { DOM.subName.textContent = name + ':'; DOM.subText.textContent = text; DOM.subtitle.classList.add('show'); this.subT = 3.4; },
-  showScreen(id) { ['menu', 'pause', 'gameover', 'online', 'lobby', 'leaders'].forEach(s => DOM[s].classList.toggle('show', s === id)); },
+  // A phone's hardware/gesture back button has no idea this is a single page -- left alone it
+  // just leaves the game entirely from any menu. One history entry acts as a buffer: opening any
+  // non-menu screen pushes it (once -- hopping between submenus doesn't nest further), and a real
+  // back press pops it and is handled as the equivalent of that screen's own back/quit control.
+  _navDeep: false,
+  showScreen(id) {
+    const nonMenu = !!(id && id !== 'menu');
+    if (!this._inPop) {
+      if (nonMenu && !this._navDeep) { try { history.pushState({ dndScreen: id }, ''); } catch (e) { } this._navDeep = true; }
+      else if (!nonMenu) this._navDeep = false;
+    } else this._navDeep = nonMenu;
+    ['menu', 'pause', 'gameover', 'online', 'lobby', 'leaders'].forEach(s => DOM[s].classList.toggle('show', s === id));
+  },
+  handleBack() {
+    if (DOM.pause.classList.contains('show')) Game.resume();
+    else if (DOM.gameover.classList.contains('show')) Game.toMenu();
+    else if (DOM.lobby.classList.contains('show')) { Net.leave(); HUD.showScreen('menu'); }
+    else if (DOM.online.classList.contains('show')) Net.closeOnline();
+    else if (DOM.leaders.classList.contains('show')) Board.close();
+  },
   showHud(v) { DOM.hud.classList.toggle('show', v); DOM.controls.classList.toggle('show', v); },
   refreshOptions() {
     const G = Game;
@@ -4069,7 +4166,7 @@ const Game = {
     Input.on.camera = function () { self.cycleCamMode(); };
     Input.on.pause = function () { if (Layout.editing) { Layout.end(); return; } if (self.coopMenu) self.resume(); else if (self.state === 'playing') self.pause(); else if (self.state === 'paused') self.resume(); };
     // menu
-    $('btnStart').addEventListener('click', () => { Audio.unlock(); self.start(); });
+    $('btnStart').addEventListener('click', () => { if (!Net.requireName()) return; Audio.unlock(); self.start(); });
     $('btnResume').addEventListener('click', () => self.resume()); $('btnQuit').addEventListener('click', () => self.toMenu());
     $('btnLayout').addEventListener('click', () => Layout.begin());
     DOM.btnSync.addEventListener('click', () => self.hardSync());
@@ -4095,6 +4192,10 @@ const Game = {
     // hand the player a screen they did not ask for when they come back
     document.addEventListener('visibilitychange', () => { if (document.hidden) { if (self.state === 'playing' && !Net.on()) self.pause(); } else Audio.resume(); });
     window.addEventListener('pagehide', () => { if (self.state === 'playing' && !Net.on()) self.pause(); });
+    // physical/system back (Android gesture, browser back) inside any menu screen after the
+    // landing page -- see HUD.showScreen's history-buffer comment for how the single pushed
+    // entry this consumes was created
+    window.addEventListener('popstate', () => { HUD._inPop = true; HUD.handleBack(); HUD._inPop = false; });
     this.updateRotateHint(); window.addEventListener('resize', () => self.updateRotateHint());
     window.addEventListener('orientationchange', () => setTimeout(() => self.updateRotateHint(), 140));
     World.generate(Math.floor(Math.random() * 1e9));
@@ -4757,7 +4858,12 @@ const Mqtt = {
    is no NAT traversal to fail and no TURN server to pay for. */
 // STALE ages out room listings; DROP is the far more forgiving window before a player is kicked,
 // because a browser throttles requestAnimationFrame to nothing the moment a tab goes to the back.
-const NET = { PREFIX: 'dnd/1/', VER: 1, MAX: 8, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6 };
+const NET = {
+  PREFIX: 'dnd/1/', VER: 1, MAX: 8, SNAP: 1 / 12, INPUT: 1 / 15, BEACON: 2, STALE: 7, DROP: 16, TIMEOUT: 6,
+  LOBBY_MAX: 300,     // auto-starts the run after 5 minutes of waiting, so a lobby can't sit forever
+  LOBBY_MIN: 10,      // instant-start is locked out for the first 10s so a solo host can't be sniped mid-load
+  VOTE_TIMEOUT: 20     // an instant-start vote that isn't unanimous within 20s cancels itself
+};
 // APPEND-ONLY. Both arrays are the wire format: snapshots pack the index, so inserting or
 // reordering makes an older client read a hunter as a walker, or `attack` as `dead`.
 const ZSTATE = ['emerge', 'chase', 'attack', 'dead', 'crouch', 'pounce', 'pin'];
@@ -4831,6 +4937,17 @@ const Net = {
     this.wireUI();
   },
   displayName() { return (this.name || 'SURVIVOR').toUpperCase(); },
+  // gate: nothing enters the arena as an anonymous "SURVIVOR" unless it once had a real name and
+  // cleared it -- flag the menu's own name field (whichever screen triggered this) so the ask is
+  // obvious rather than a silent no-op click
+  requireName() {
+    if (this.name.trim()) return true;
+    const field = DOM.online.classList.contains('show') ? DOM.inpName : DOM.inpNameMenu;
+    field.classList.add('invalid');
+    field.focus();
+    HUD.toast('ENTER A NAME FIRST, SURVIVOR', 2.4);
+    return false;
+  },
   topicH(code) { return NET.PREFIX + 'r/' + (code || this.code) + '/h'; },
   topicC(code) { return NET.PREFIX + 'r/' + (code || this.code) + '/c'; },
   lobbyTopic() { return NET.PREFIX + 'lobby'; },
@@ -4920,6 +5037,7 @@ const Net = {
     this.mode = 'host'; this.code = code; this.hostId = this.id; this.hostName = this.displayName();
     this.peers = {}; this.inRoom = true; this.started = false; this.wipeSent = false;
     this.seed = Math.floor(Math.random() * 1e9);
+    this.lobbyCountdown = NET.LOBBY_MAX; this.tLobbyTick = 1; this.startVote = null;
     Mqtt.subscribe(this.topicC());
     this.tBeacon = 0; this.beacon(); this.showLobby();
   },
@@ -4955,7 +5073,7 @@ const Net = {
       peer.last = this.clock;
       // `ch` tells the joiner which color they actually got -- may differ from what they asked
       // for if it was already taken (see pickAvatarFor)
-      this.send({ k: 'welcome', to: id, h: this.id, seed: this.seed, host: this.displayName(), st: this.started ? 'playing' : 'lobby', roster: this.roster(), ch: peer.char });
+      this.send({ k: 'welcome', to: id, h: this.id, seed: this.seed, host: this.displayName(), st: this.started ? 'playing' : 'lobby', roster: this.roster(), ch: peer.char, lt: this.started ? undefined : Math.ceil(this.lobbyCountdown) });
       if (this.started) this.send({ k: 'go', to: id, seed: this.seed });
       else this.send({ k: 'roster', roster: this.roster() });   // everyone already waiting needs the update
       return;
@@ -4968,6 +5086,9 @@ const Net = {
     else if (m.k === 'rev') this.applyRevive(m.to, peer);
     else if (m.k === 'esc') this.applyEscape(peer, m);
     else if (m.k === 'brl') { const br = World.barrels[m.i]; if (br && br.alive) Game.explodeBarrel(br); }
+    else if (m.k === 'startReq') this.beginStartVote(id, peer.name);
+    else if (m.k === 'startYes') this.registerStartVote(id);
+    else if (m.k === 'startNo') this.cancelStartVote(peer.name + ' DECLINED');
   },
   mkPeer(id, name, ch) {
     const self = this;
@@ -4992,13 +5113,78 @@ const Net = {
     this.refreshLobby(); this.beacon();
     this.send({ k: 'roster', roster: this.roster() });
     if (this.started) this.checkTeamWipe();
+    // someone leaving mid-vote can turn a not-yet-unanimous vote into a unanimous one
+    else if (this.startVote) {
+      this.startVote.need = this.roomSize();
+      if (this.startVote.confirmed.size >= this.startVote.need) { this.startVote = null; this.startRun(); }
+      else this.send({ k: 'startVoteN', c: this.startVote.confirmed.size, need: this.startVote.need });
+    }
   },
   startRun() {
     if (this.mode !== 'host') return;
-    this.started = true; this.wipeSent = false;
+    this.started = true; this.wipeSent = false; this.startVote = null;
     this.send({ k: 'go', seed: this.seed });
     this.beacon();
     Game.start(this.seed);
+  },
+  /* ---------------- lobby countdown + instant-start vote ----------------
+     The waiting room auto-starts after NET.LOBBY_MAX seconds so nobody is stuck there forever.
+     Anyone (host or client) can ask to skip ahead once NET.LOBBY_MIN seconds have passed, but with
+     more than one person in the room that request turns into a vote: everyone else gets a popup
+     and the run only starts once every last person has confirmed. Declining, someone dropping out,
+     or the vote sitting unconfirmed for NET.VOTE_TIMEOUT seconds all resolve it without starting. */
+  requestInstantStart() {
+    const elapsed = NET.LOBBY_MAX - (this.lobbyCountdown != null ? this.lobbyCountdown : NET.LOBBY_MAX);
+    if (elapsed < NET.LOBBY_MIN) return;
+    if (this.mode === 'host') {
+      if (this.startVote) return;
+      if (this.roomSize() <= 1) { this.startRun(); return; }
+      this.beginStartVote(this.id, this.displayName());
+    } else {
+      if (this.startVote) return;   // already mid-vote locally -- wait for it to resolve
+      this.send({ k: 'startReq', id: this.id });
+      // optimistic local state so the requester sees "waiting on others" immediately rather than
+      // however long the round trip through the host takes to echo the vote back
+      this.startVote = { by: this.id, byName: this.displayName(), need: this.roomSize(), confirmed: 1, mine: true };
+      this.refreshLobby();
+    }
+  },
+  beginStartVote(byId, byName) {
+    if (this.startVote || this.roomSize() <= 1) return;
+    this.startVote = { by: byId, byName: byName, confirmed: new Set([byId]), need: this.roomSize(), t: NET.VOTE_TIMEOUT };
+    this.send({ k: 'startVote', by: byId, byName: byName, need: this.startVote.need, c: 1 });
+    this.refreshLobby();
+  },
+  registerStartVote(id) {
+    if (!this.startVote) return;
+    this.startVote.confirmed.add(id);
+    if (this.startVote.confirmed.size >= this.startVote.need) { this.startVote = null; this.startRun(); return; }
+    this.send({ k: 'startVoteN', c: this.startVote.confirmed.size, need: this.startVote.need });
+    this.refreshLobby();
+  },
+  cancelStartVote(reason) {
+    const wasActive = !!this.startVote;
+    this.startVote = null;
+    if (this.mode === 'host') { if (wasActive) this.send({ k: 'startVoteCancel', reason: reason || 'CANCELED' }); }
+    HUD.toast('INSTANT START ' + (reason || 'CANCELED'), 2.6);
+    this.refreshLobby();
+  },
+  // runs every frame while sitting in the lobby (host and client alike); the host is the only one
+  // that actually decides anything here (auto-start, vote timeout) -- clients just count down the
+  // locally-known value smoothly and get corrected back onto the host's clock once a second
+  updateLobbyTimer(dt) {
+    if (this.lobbyCountdown == null) this.lobbyCountdown = NET.LOBBY_MAX;
+    this.lobbyCountdown = Math.max(0, this.lobbyCountdown - dt);
+    if (this.startVote && this.mode === 'host') {
+      this.startVote.t -= dt;
+      if (this.startVote.t <= 0) { this.cancelStartVote('TIMED OUT'); return; }
+    }
+    this._lobbyRedrawT = (this._lobbyRedrawT || 0) - dt;
+    if (this._lobbyRedrawT <= 0) { this._lobbyRedrawT = 0.25; this.refreshLobby(); }
+    if (this.mode !== 'host') return;
+    this.tLobbyTick -= dt;
+    if (this.tLobbyTick <= 0) { this.tLobbyTick = 1; this.send({ k: 'lobbyT', t: Math.ceil(this.lobbyCountdown) }); }
+    if (this.lobbyCountdown <= 0) this.startRun();
   },
 
   /* ---------------- joining ---------------- */
@@ -5024,11 +5210,12 @@ const Net = {
       // what everyone else's roster actually shows for us
       if (m.ch && m.ch !== Game.charId) { Game.selectChar(m.ch); HUD.toast('COLOR TAKEN — YOU\'RE ' + AVATARS[m.ch].label + ' NOW', 3); }
       this.applyRoster(m.roster);
+      if (m.lt != null) this.lobbyCountdown = m.lt;
       if (m.st !== 'playing') this.showLobby();
       return;
     }
     if (!this.inRoom) return;
-    if (m.k === 'go') { this.started = true; Game.start(m.seed != null ? m.seed : this.seed); return; }
+    if (m.k === 'go') { this.started = true; this.startVote = null; Game.start(m.seed != null ? m.seed : this.seed); return; }
     if (m.k === 'roster') { this.applyRoster(m.roster); this.refreshLobby(); return; }
     if (m.k === 's') { this.applySnapshot(m); return; }
     if (m.k === 'dmg') { if (m.to === this.id) Player.hurt(m.d, m.x, m.z); return; }
@@ -5038,6 +5225,19 @@ const Net = {
     if (m.k === 'pk') { Game.collect(PU_LIST[m.t] || 'health', m.x, m.z, m.by !== this.id); return; }
     if (m.k === 'over') { this.finishRun(m); return; }
     if (m.k === 'bye') { HUD.toast('THE HOST ENDED THE RUN', 3); this.leave(true); Game.toMenu(); return; }
+    // lobby waiting-room ticker + the instant-start unanimous-vote popup (see beginStartVote on
+    // the host side, which is the only place a vote is actually decided)
+    if (m.k === 'lobbyT') { this.lobbyCountdown = m.t; this.refreshLobby(); return; }
+    if (m.k === 'startVote') {
+      this.startVote = { by: m.by, byName: m.byName, need: m.need, confirmed: m.c, mine: m.by === this.id };
+      this.refreshLobby();
+      return;
+    }
+    if (m.k === 'startVoteN') { if (this.startVote) { this.startVote.confirmed = m.c; if (m.need != null) this.startVote.need = m.need; this.refreshLobby(); } return; }
+    if (m.k === 'startVoteCancel') {
+      this.startVote = null; HUD.toast('INSTANT START ' + (m.reason || 'CANCELED'), 2.6); this.refreshLobby();
+      return;
+    }
   },
   applyRoster(roster) {
     if (!roster) return;
@@ -5063,11 +5263,13 @@ const Net = {
     for (const k in this.peers) this.killAvatar(this.peers[k]);
     this.peers = {}; this.mode = 'off'; this.code = ''; this.started = false;
     this.inRoom = false; this.joining = false; this.reviveTarget = null; this.reviveT = 0;
+    this.lobbyCountdown = null; this.startVote = null;
     if (this.selfBeacon) { Beacon.dispose(this.selfBeacon); this.selfBeacon = null; }
     if (DOM.coop) DOM.coop.classList.remove('show');
     if (DOM.netPill) DOM.netPill.classList.remove('show');
     if (DOM.downed) DOM.downed.classList.remove('show');
     if (DOM.revive) DOM.revive.classList.remove('show');
+    if (DOM.lobbyVote) DOM.lobbyVote.classList.remove('show');
   },
 
   /* ---------------- per-player state exchange ---------------- */
@@ -5174,7 +5376,7 @@ const Net = {
       if (this.tBeacon <= 0) { this.tBeacon = NET.BEACON; this.beacon(); }
       for (const k in this.peers) if (this.clock - this.peers[k].last > NET.DROP) { this.dropPeer(k, ' TIMED OUT'); break; }
     }
-    if (!this.started) return;
+    if (!this.started) { this.updateLobbyTimer(dt); return; }
 
     if (this.mode === 'host') {
       this.tSnap -= dt;
@@ -5299,25 +5501,45 @@ const Net = {
   },
 
   /* ---------------- zombie targeting across the squad ---------------- */
+  // Coop cannot freeze the world while someone's menu is open (see Game.pause), so instead a
+  // paused/menu'd survivor just drops out of who the horde can pick as a target -- coopMenu for
+  // the local body, the afk flag (already broadcast to peers, see setPeer) for everyone else.
+  // They're still physically there: a zombie already chasing someone else can walk into them
+  // and land a hit, see Zombie.update's incidental-contact check just below.
   targetFor(zb) {
     if (!this.isHost()) return Player;
-    let best = Player.alive ? Player : null;
+    let best = (Player.alive && !Game.coopMenu) ? Player : null;
     let bd = best ? (Player.x - zb.x) * (Player.x - zb.x) + (Player.z - zb.z) * (Player.z - zb.z) : Infinity;
     for (const k in this.peers) {
-      const p = this.peers[k]; if (p.st !== 0) continue;
+      const p = this.peers[k]; if (p.st !== 0 || p.afk) continue;
       const d = (p.x - zb.x) * (p.x - zb.x) + (p.z - zb.z) * (p.z - zb.z);
       if (d < bd) { bd = d; best = p; }
     }
-    // everyone is down: keep shambling toward the local body so the horde does not freeze
+    // everyone is down (or paused): keep shambling toward the local body so the horde does not freeze
     return best || Player;
   },
-  // there is one flow field, so aim it at the middle of whoever is still standing
+  // there is one flow field, so aim it at the middle of whoever is still standing and in the fight
   flowPoint(out) {
     let n = 0, sx = 0, sz = 0;
-    if (Player.alive) { sx += Player.x; sz += Player.z; n++; }
-    for (const k in this.peers) { const p = this.peers[k]; if (p.st === 0) { sx += p.x; sz += p.z; n++; } }
+    if (Player.alive && !Game.coopMenu) { sx += Player.x; sz += Player.z; n++; }
+    for (const k in this.peers) { const p = this.peers[k]; if (p.st === 0 && !p.afk) { sx += p.x; sz += p.z; n++; } }
     if (!n) { out.x = Player.x; out.z = Player.z; } else { out.x = sx / n; out.z = sz / n; }
     return out;
+  },
+  // A zombie hunting someone else can still clip a paused survivor it happens to walk through --
+  // pausing means "step out of the fight", not "become a ghost". Throttled per-zombie so standing
+  // on top of someone doesn't melt them every frame.
+  touchInvisible(zb, dt) {
+    zb.touchT = (zb.touchT || 0) - dt; if (zb.touchT > 0) return;
+    const rr = zb.radius + CFG.playerR + 0.15;
+    const tap = (t, hidden) => {
+      if (!hidden || t.st || !t.alive) return false;
+      const dx = t.x - zb.x, dz = t.z - zb.z;
+      if (dx * dx + dz * dz > rr * rr) return false;
+      t.hurt(Math.round(zb.dmg * 0.4), zb.x, zb.z); return true;
+    };
+    if (tap(Player, Game.coopMenu)) { zb.touchT = 0.8; return; }
+    for (const k in this.peers) { if (tap(this.peers[k], this.peers[k].afk)) { zb.touchT = 0.8; return; } }
   },
   peerNear(x, z, r) {
     for (const k in this.peers) {
@@ -5462,18 +5684,34 @@ const Net = {
   /* ---------------- screens ---------------- */
   wireUI() {
     const self = this;
-    DOM.inpName.value = this.name;
-    DOM.inpName.addEventListener('input', function () {
-      self.name = DOM.inpName.value.slice(0, 14);
-      try { localStorage.setItem('dnd_name', self.name); } catch (e) { }
-    });
-    DOM.btnOnline.addEventListener('click', function () { self.openOnline(); });
+    DOM.inpName.value = this.name; DOM.inpNameMenu.value = this.name;
+    const onNameInput = function (e) {
+      self.name = e.target.value.slice(0, 14);
+      try { localStorage.setItem('dnd_name', self.name); } catch (err) { }
+      // keep both name fields (main menu + online screen) mirrored so whichever one the
+      // player types into, the other reflects it without needing a separate sync step
+      if (e.target !== DOM.inpName) DOM.inpName.value = self.name;
+      if (e.target !== DOM.inpNameMenu) DOM.inpNameMenu.value = self.name;
+      if (self.name.trim()) { DOM.inpName.classList.remove('invalid'); DOM.inpNameMenu.classList.remove('invalid'); }
+    };
+    DOM.inpName.addEventListener('input', onNameInput);
+    DOM.inpNameMenu.addEventListener('input', onNameInput);
+    DOM.btnOnline.addEventListener('click', function () { if (!self.requireName()) return; self.openOnline(); });
     DOM.btnOnlineBack.addEventListener('click', function () { self.closeOnline(); });
-    DOM.btnHost.addEventListener('click', function () { Audio.unlock(); self.host(); });
-    DOM.btnJoinCode.addEventListener('click', function () { Audio.unlock(); self.join(DOM.inpCode.value); });
-    DOM.inpCode.addEventListener('keydown', function (e) { if (e.key === 'Enter') { Audio.unlock(); self.join(DOM.inpCode.value); } });
-    DOM.btnLobbyStart.addEventListener('click', function () { Audio.unlock(); self.startRun(); });
+    DOM.btnHost.addEventListener('click', function () { if (!self.requireName()) return; Audio.unlock(); self.host(); });
+    DOM.btnJoinCode.addEventListener('click', function () { if (!self.requireName()) return; Audio.unlock(); self.join(DOM.inpCode.value); });
+    DOM.inpCode.addEventListener('keydown', function (e) { if (e.key === 'Enter') { if (!self.requireName()) return; Audio.unlock(); self.join(DOM.inpCode.value); } });
+    DOM.btnLobbyStart.addEventListener('click', function () { Audio.unlock(); self.requestInstantStart(); });
     DOM.btnLobbyLeave.addEventListener('click', function () { self.leave(); self.openOnline(); });
+    DOM.btnVoteYes.addEventListener('click', function () {
+      Audio.unlock();
+      if (self.mode === 'host') self.registerStartVote(self.id);
+      else self.send({ k: 'startYes', id: self.id });
+    });
+    DOM.btnVoteNo.addEventListener('click', function () {
+      if (self.mode === 'host') self.cancelStartVote(self.displayName() + ' DECLINED');
+      else self.send({ k: 'startNo', id: self.id });
+    });
     DOM.btnLeaders.addEventListener('click', function () { Board.open(); });
     DOM.btnLeadersBack.addEventListener('click', function () { Board.close(); });
   },
@@ -5509,11 +5747,36 @@ const Net = {
       return '<div class="pent' + (r.me ? ' me' : '') + '"><span class="dot"></span><span class="pn">' +
         Net.esc(r.name) + '</span><span class="pr">' + (r.host ? 'HOST' : 'SURVIVOR') + '</span></div>';
     }).join('');
-    DOM.btnLobbyStart.style.display = host ? '' : 'none';
-    DOM.lobbyStatus.textContent = host
-      ? (rows.length < 2 ? 'WAITING FOR SURVIVORS — YOU CAN START ALONE' : rows.length + ' SURVIVORS READY')
-      : 'WAITING FOR ' + (this.hostName || 'THE HOST') + ' TO START';
+    DOM.lobbyStatus.textContent = rows.length < 2
+      ? 'WAITING FOR SURVIVORS — THE RUN STARTS ON ITS OWN IF NOBODY JOINS'
+      : rows.length + ' SURVIVORS READY';
     DOM.lobbyHint.style.display = host ? '' : 'none';
+
+    // countdown -- every player ticks this locally each frame and gets nudged back onto the
+    // host's authoritative value once a second (see updateLobbyTimer / the 'lobbyT' message)
+    const secs = Math.max(0, Math.ceil(this.lobbyCountdown != null ? this.lobbyCountdown : NET.LOBBY_MAX));
+    const mm = Math.floor(secs / 60), ss = secs % 60;
+    DOM.lobbyCountdown.textContent = 'STARTS IN ' + mm + ':' + (ss < 10 ? '0' : '') + ss;
+
+    // instant-start gate: locked for the first NET.LOBBY_MIN seconds, then anyone can ask
+    const elapsed = NET.LOBBY_MAX - (this.lobbyCountdown != null ? this.lobbyCountdown : NET.LOBBY_MAX);
+    const unlocked = elapsed >= NET.LOBBY_MIN, voting = !!this.startVote;
+    DOM.btnLobbyStart.disabled = !unlocked || voting;
+    DOM.lobbyStartHint.textContent = unlocked ? '' : '(' + Math.ceil(NET.LOBBY_MIN - elapsed) + 's)';
+
+    // the "pop up" -- everyone but whoever asked for the instant start sees CONFIRM/NOT YET;
+    // the requester just watches the tally come in, since clicking the button was their confirm
+    if (this.startVote) {
+      const sv = this.startVote, count = sv.confirmed instanceof Set ? sv.confirmed.size : sv.confirmed;
+      const mine = sv.by === this.id;
+      DOM.lobbyVote.classList.add('show');
+      DOM.lobbyVoteText.textContent = mine ? 'WAITING FOR EVERYONE TO CONFIRM…' : ((sv.byName || 'A SURVIVOR') + ' WANTS TO START NOW');
+      DOM.lobbyVoteSub.textContent = count + ' / ' + sv.need + ' CONFIRMED';
+      DOM.btnVoteYes.style.display = mine ? 'none' : '';
+      DOM.btnVoteNo.style.display = mine ? 'none' : '';
+    } else {
+      DOM.lobbyVote.classList.remove('show');
+    }
   }
 };
 
