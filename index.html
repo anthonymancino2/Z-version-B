@@ -140,6 +140,10 @@ button{font-family:inherit;color:inherit;}
 #btnAuto{width:44px;height:44px;right:calc(60px + var(--sar));top:calc(10px + var(--sat));font-size:10px;border-color:rgba(255,255,255,.35);box-shadow:none;}
 #btnAuto small{font-size:8px;margin-top:1px;}
 #btnAuto.on{border-color:#ffd83b;box-shadow:0 0 14px rgba(255,216,59,.6);color:#ffd83b;}
+/* VIEW cycles fp/3rd/far/top -- sits left of AUTO, same size, same "quiet until touched" styling */
+#btnView{width:44px;height:44px;right:calc(114px + var(--sar));top:calc(10px + var(--sat));font-size:10px;border-color:rgba(255,255,255,.35);box-shadow:none;}
+#btnView small{font-size:8px;margin-top:1px;}
+#btnView.on{border-color:var(--accent2);box-shadow:0 0 14px var(--glow);color:var(--accent2);}
 /* Sprint sits in the right-side cluster, between SWAP WEAPON and the fire/reload row — clear of
    both by design, not just visually close (checked against every neighbor's own box). */
 #btnSprint{width:60px;height:60px;right:calc(104px + var(--sar));bottom:calc(118px + var(--sab));font-size:11px;border-color:var(--accent2);}
@@ -231,6 +235,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
   #btnReload{width:50px;height:50px;right:calc(116px + var(--sar));bottom:calc(16px + var(--sab));}
   #btnSwitch{width:46px;height:46px;right:calc(16px + var(--sar));bottom:calc(112px + var(--sab));}
   #btnAuto{width:40px;height:40px;right:calc(64px + var(--sar));top:calc(10px + var(--sat));}
+  #btnView{width:40px;height:40px;right:calc(114px + var(--sar));top:calc(10px + var(--sat));}
   #btnSprint{width:50px;height:50px;right:calc(88px + var(--sar));bottom:calc(100px + var(--sab));}
   #joyHint{left:calc(42px + var(--sal));bottom:calc(42px + var(--sab));width:104px;height:104px;}
   #layoutBar{top:calc(56px + var(--sat));}
@@ -240,8 +245,9 @@ h1.title em{font-style:normal;color:var(--accent2);}
 }
 @media (max-width:560px) and (orientation:portrait){
   .hudtc{top:calc(58px + var(--sat));}
-  /* portrait is narrow: stack AUTO under PAUSE so the score column stops crowding the wave text */
+  /* portrait is narrow: stack AUTO and VIEW under PAUSE so the score column stops crowding the wave text */
   #btnAuto{right:calc(10px + var(--sar));top:calc(64px + var(--sat));}
+  #btnView{right:calc(10px + var(--sar));top:calc(118px + var(--sat));}
   .hudtr{right:calc(68px + var(--sar));}
   #hpBar{width:34vw;} #hpNum{font-size:18px;} #points{font-size:22px;} #waveNum{font-size:22px;} #zLeft{font-size:10px;}
   #subtitle{bottom:calc(272px + var(--sab));max-width:86vw;font-size:13px;}
@@ -374,6 +380,7 @@ h1.title em{font-style:normal;color:var(--accent2);}
     <div id="joyBase"></div>
     <div id="joyKnob"></div>
     <div id="btnAuto" class="tbtn">AUTO<small id="autoState">OFF</small></div>
+    <div id="btnView" class="tbtn">VIEW<small id="viewState">1ST</small></div>
     <div id="btnSwitch" class="tbtn">SWAP<small>WEAPON</small></div>
     <div id="btnReload" class="tbtn">RELOAD</div>
     <div id="btnSprint" class="tbtn"><span class="meter"></span>SPRINT</div>
@@ -653,6 +660,9 @@ const CFG = {
   // the map area; the effect pools below got a more modest bump since most (bullets, particles)
   // cycle fast enough that raw zombie count matters far less than it does for the cap itself.
   maxZombies: 600, bullets: 280, particles: 3600, floaties: 72, pickups: 12, decals: 110, explosions: 8,
+  // enemy locator beam (always-on) + the red x-ray silhouette that shows through walls -- see
+  // ZG.xrayMat and Zombies.beamMesh
+  beamRadius: 0.13, beamHeight: 16,
   zombieBaseHp: 60, zombieBaseSpeed: 2.35, countBase: 6,
   countMul: 1.25, speedMul: 1.05, hpMul: 1.15,
   ptsHit: 10, ptsKill: 100, ptsHead: 25,
@@ -667,8 +677,13 @@ const CFG = {
   downTime: 45, reviveTime: 3.5, reviveRange: 2.4, reviveHp: 0.4,
   // sprint: a full meter buys ~4s of running, and refills in ~7s once you stop leaning on it
   sprintMul: 1.62, sprintDrain: 0.25, sprintRegen: 0.145, sprintHold: 0.7, sprintMin: 0.12,
-  // third-person boom: behind and over the right shoulder, camera axis parallel to the aim ray
+  // third-person boom: behind and over the right shoulder, camera axis parallel to the aim ray.
+  // 'tpFar' is the same boom pulled way back; 'top' is its own fixed-pitch chase cam (see
+  // updateCameraTop) since a real top-down view can't react to the player's own mouse pitch the
+  // way an over-the-shoulder boom does without the camera height swinging all over the place.
   tpDist: 2.5, tpSide: 0.92, tpUp: 0.45,
+  tpFarDist: 7, tpFarSide: 1.5, tpFarUp: 2.4,
+  topBack: 9, topHeight: 30, topPitch: -1.2,
   // hunter: the coil, the leap, and how long it can ride you. pinMax is the safety valve — a solo
   // player with nobody to rescue them is never held down until they die.
   hunterMin: 5.5, hunterRange: 15, hunterWindup: 0.55, hunterCool: 9, pounceSpeed: 15.5, pounceUp: 5.2, pounceGrav: 14,
@@ -1282,7 +1297,7 @@ const Input = {
   el: {},
   init() {
     const el = this.el;
-    ['touchLayer', 'joyBase', 'joyKnob', 'joyHint', 'btnFire', 'btnReload', 'btnSwitch', 'btnAuto', 'btnSprint', 'btnPause', 'c'].forEach(id => el[id] = $(id));
+    ['touchLayer', 'joyBase', 'joyKnob', 'joyHint', 'btnFire', 'btnReload', 'btnSwitch', 'btnAuto', 'btnView', 'btnSprint', 'btnPause', 'c'].forEach(id => el[id] = $(id));
     const self = this, opt = { passive: false };
     const layer = el.touchLayer;
     layer.addEventListener('touchstart', function (e) { e.preventDefault(); self.touchSeen = true; self.on.any(); for (const t of e.changedTouches) self.touchBegin(t); }, opt);
@@ -1316,6 +1331,7 @@ const Input = {
     tap(el.btnReload, () => self.on.reload());
     tap(el.btnSwitch, () => self.on.swap());
     tap(el.btnAuto, () => self.on.auto());
+    tap(el.btnView, () => self.on.camera());
     tap(el.btnSprint, () => self.on.sprint());
     tap(el.btnPause, () => self.on.pause());
     // Keyboard
@@ -1404,7 +1420,7 @@ const Input = {
    button centre, which keeps them sane across a rotate or a different phone. */
 const Layout = {
   KEY: 'dnd_layout_v1',
-  ids: ['btnFire', 'btnReload', 'btnSwitch', 'btnAuto', 'btnSprint'],
+  ids: ['btnFire', 'btnReload', 'btnSwitch', 'btnAuto', 'btnView', 'btnSprint'],
   pos: {}, editing: false, drag: null, els: {}, bar: null,
   init() {
     for (const id of this.ids) this.els[id] = $(id);
@@ -2197,14 +2213,20 @@ const ZG = {};
 /* Z version B: every zombie is a low-poly humanoid — one merged torso+head BufferGeometry
    (still a single draw call) plus two separate arm meshes that actually swing when it moves.
    No legs; they added the most draw calls (2 more meshes) for the least readable motion at a
-   distance, and legs barely reads through the ground clutter anyway. 3 draw calls per zombie
-   is still a fraction of the 7-draw-call procedural body this version replaced. */
+   distance, and legs barely reads through the ground clutter anyway. A 4th mesh (`xray`, see
+   ZG.xrayMat) reuses the body geometry to paint the "visible through walls" silhouette. 4 draw
+   calls per zombie is still well under the 7-draw-call procedural body this version replaced. */
 const ZOMBIE_SHOULDER = { x: 0.38, y: 1.5 }; // matches ZG.body's torso: 0.6 wide, 1.55 tall
 function buildZombieGeometries() {
   ZG.body = makeHumanoidGeo(0.6, 1.55, 0.42, 0.4, 0.4, 0.38); // feet at y=0, ~1.95 tall overall
   ZG.arm = makeArmGeo(0.17, 1.3, 0.18);
   ZG.shadow = new THREE.PlaneGeometry(1.5, 1.5); ZG.shadow.rotateX(-Math.PI / 2);
   ZG.shadowMat = new THREE.MeshBasicMaterial({ map: TEX.shadow, transparent: true, depthWrite: false, color: 0xffffff, opacity: 0.55 });
+  // depthFunc:GreaterDepth means this only ever passes the depth test where something ELSE is
+  // already nearer in the depth buffer -- i.e. it renders *only* the parts of the silhouette a
+  // wall (or anything else) is currently hiding. Fully visible zombies draw no red at all here;
+  // it's pure "this part of you is behind something" paint, layered over the normal body draw.
+  ZG.xrayMat = new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.6, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false, fog: false });
 }
 class Zombie {
   constructor(idx) {
@@ -2221,8 +2243,11 @@ class Zombie {
     this.body = new THREE.Mesh(ZG.body, this.mat);
     this.armL = new THREE.Mesh(ZG.arm, this.mat); this.armL.position.set(-ZOMBIE_SHOULDER.x, ZOMBIE_SHOULDER.y, 0);
     this.armR = new THREE.Mesh(ZG.arm, this.mat); this.armR.position.set(ZOMBIE_SHOULDER.x, ZOMBIE_SHOULDER.y, 0);
+    // riding along in the same group, sharing the body's own geometry, so it needs zero extra
+    // per-frame work to track position/pose -- see ZG.xrayMat for how it only shows through walls
+    this.xray = new THREE.Mesh(ZG.body, ZG.xrayMat);
     this.shadow = new THREE.Mesh(ZG.shadow, ZG.shadowMat); this.shadow.position.y = 0.012;
-    g.add(this.body); g.add(this.armL); g.add(this.armR); g.visible = false;
+    g.add(this.body); g.add(this.armL); g.add(this.armR); g.add(this.xray); g.visible = false;
     R.scene.add(g); R.scene.add(this.shadow); this.shadow.visible = false;
   }
   spawn(typeName, x, z, wave) {
@@ -2533,7 +2558,20 @@ class Zombie {
 }
 const Zombies = {
   pool: [], _tmp: { x: 0, z: 0 }, _sp: { x: 0, z: 0 },
-  init() { buildZombieGeometries(); for (let i = 0; i < CFG.maxZombies; i++) this.pool.push(new Zombie(i)); },
+  init() {
+    buildZombieGeometries(); for (let i = 0; i < CFG.maxZombies; i++) this.pool.push(new Zombie(i));
+    // one instanced mesh for every zombie's locator beam -- a single draw call no matter how many
+    // hundred are alive, since it's just per-instance transforms, not per-zombie mesh objects.
+    // No depth test at all (unlike the per-zombie xray mesh): the beam is meant to read through
+    // *everything*, including from the almost-top-down camera view.
+    const beamGeo = new THREE.CylinderGeometry(CFG.beamRadius, CFG.beamRadius, CFG.beamHeight, 6, 1, true);
+    beamGeo.translate(0, CFG.beamHeight / 2, 0);
+    const beamMat = new THREE.MeshBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, side: THREE.DoubleSide, fog: false });
+    this.beamMesh = new THREE.InstancedMesh(beamGeo, beamMat, CFG.maxZombies);
+    this.beamMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); this.beamMesh.frustumCulled = false; this.beamMesh.renderOrder = 999;
+    for (let i = 0; i < CFG.maxZombies; i++) World.setInst(this.beamMesh, i, 0, -50, 0, 0, 0.001, 0.001);
+    R.scene.add(this.beamMesh);
+  },
   activeCount() { let n = 0; for (const z of this.pool) if (z.on && z.state !== 'dead') n++; return n; },
   countType(name) { let n = 0; for (const z of this.pool) if (z.on && z.state !== 'dead' && z.typeName === name) n++; return n; },
   // one hunter per survivor: two riding the same person is an unrecoverable pile-on
@@ -2557,7 +2595,16 @@ const Zombies = {
     if (!ok) { sp.x = -P.x * 0.8; sp.z = -P.z * 0.8; }
     zb.spawn(typeName, sp.x, sp.z, wave); return zb;
   },
-  update(dt) { const mirror = Net.isClient(); for (const z of this.pool) if (z.on) { if (mirror) z.netUpdate(dt); else z.update(dt); } }
+  update(dt) {
+    const mirror = Net.isClient();
+    for (const z of this.pool) if (z.on) {
+      if (mirror) z.netUpdate(dt); else z.update(dt);
+      // parked off-screen the instant a zombie dies -- no lingering beam over a corpse
+      if (z.state === 'dead') World.setInst(this.beamMesh, z.idx, 0, -50, 0, 0, 0.001, 0.001);
+      else World.setInst(this.beamMesh, z.idx, z.x, z.y + z.height, z.z, 0, 1, 1);
+    }
+    this.beamMesh.instanceMatrix.needsUpdate = true;
+  }
 };
 
 /* ------------------------------------------------------------------ pickups (floating indicators) */
@@ -2868,8 +2915,9 @@ const Player = {
     this.sprintOn = true;
   },
   updateCamera() {
-    const cam = R.camera, sh = Game.shake;
-    if (Game.camMode === 'tp') { this.updateCameraTP(cam, sh); Audio.lx = this.x; Audio.lz = this.z; Audio.lyaw = this.yaw; return; }
+    const cam = R.camera, sh = Game.shake, m = Game.camMode;
+    if (m === 'tp' || m === 'tpFar') { this.updateCameraTP(cam, sh, m); Audio.lx = this.x; Audio.lz = this.z; Audio.lyaw = this.yaw; return; }
+    if (m === 'top') { this.updateCameraTop(cam, sh); Audio.lx = this.x; Audio.lz = this.z; Audio.lyaw = this.yaw; return; }
     cam.position.set(this.x + (Math.random() - 0.5) * sh * 0.14, this.eyeY() + (Math.random() - 0.5) * sh * 0.1, this.z + (Math.random() - 0.5) * sh * 0.14);
     cam.rotation.set(this.pitch + (Math.random() - 0.5) * sh * 0.02, this.yaw, (Math.random() - 0.5) * sh * 0.03 + (Game.state === 'dying' ? Game.deathRoll : 0));
     if (Game.state === 'dying') { cam.position.y = lerp(cam.position.y, 0.35, Game.deathK); cam.rotation.x = lerp(this.pitch, -0.55, Game.deathK); }
@@ -2878,13 +2926,16 @@ const Player = {
   // Over-the-shoulder boom. The camera axis stays parallel to the aim ray rather than converging
   // on it, which keeps the body clear of the middle of the screen; the crosshair is projected onto
   // whatever the ray actually hits (see FX.draw), so it still tells the truth about your shot.
-  updateCameraTP(cam, sh) {
+  // 'tp' (close) and 'tpFar' share this exact math, just with a bigger dist/side/up.
+  updateCameraTP(cam, sh, mode) {
+    const far = mode === 'tpFar';
+    const dist = far ? CFG.tpFarDist : CFG.tpDist, side = far ? CFG.tpFarSide : CFG.tpSide, up = far ? CFG.tpFarUp : CFG.tpUp;
     const dir = this.eyeDir(this._dir);
     let py = this.eyeY();
     if (Game.state === 'dying') py = lerp(py, 0.5, Game.deathK);
     const px = this.x, pz = this.z;
     const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
-    let cx = px - dir.x * CFG.tpDist + rx * CFG.tpSide, cy = py - dir.y * CFG.tpDist + CFG.tpUp, cz = pz - dir.z * CFG.tpDist + rz * CFG.tpSide;
+    let cx = px - dir.x * dist + rx * side, cy = py - dir.y * dist + up, cz = pz - dir.z * dist + rz * side;
     // never let the boom punch through a wall: pull it in to the first thing it crosses
     const t = World.segHit(px, py, pz, cx, cy, cz);
     if (t >= 0) { const k = Math.max(0.12, t * 0.86); cx = px + (cx - px) * k; cy = py + (cy - py) * k; cz = pz + (cz - pz) * k; }
@@ -2892,6 +2943,16 @@ const Player = {
     cam.position.set(cx + (Math.random() - 0.5) * sh * 0.12, cy + (Math.random() - 0.5) * sh * 0.08, cz + (Math.random() - 0.5) * sh * 0.12);
     cam.rotation.set(this.pitch + (Math.random() - 0.5) * sh * 0.02, this.yaw,
       (Math.random() - 0.5) * sh * 0.03 + (Game.state === 'dying' ? Game.deathRoll : 0));
+  },
+  // Almost-top-down, far above and a little behind so the world doesn't spin disorientingly
+  // when you turn — a fixed downward pitch, deliberately deaf to the player's own mouse-look
+  // pitch (unlike the tp/tpFar boom above), since reacting to that would swing this camera's
+  // height all over the place instead of holding one steady far-away angle.
+  updateCameraTop(cam, sh) {
+    const bx = Math.sin(this.yaw), bz = Math.cos(this.yaw); // behind = opposite of eyeDir's forward
+    const cx = this.x + bx * CFG.topBack, cz = this.z + bz * CFG.topBack, cy = CFG.topHeight;
+    cam.position.set(cx + (Math.random() - 0.5) * sh * 0.1, cy + (Math.random() - 0.5) * sh * 0.06, cz + (Math.random() - 0.5) * sh * 0.1);
+    cam.rotation.set(CFG.topPitch + (Math.random() - 0.5) * sh * 0.01, this.yaw, (Math.random() - 0.5) * sh * 0.02 + (Game.state === 'dying' ? Game.deathRoll : 0));
   },
   // where the shot lands: the auto-lock target, else the first wall down the ray, else far away
   aimPoint(out) {
@@ -2903,7 +2964,7 @@ const Player = {
   },
   updateBody(dt) {
     const b = this.body; if (!b) return;
-    const show = Game.camMode === 'tp' && !this.spectating && (Game.state === 'playing' || Game.state === 'dying');
+    const show = Game.camMode !== 'fp' && !this.spectating && (Game.state === 'playing' || Game.state === 'dying');
     b.g.visible = show; b.shadow.visible = show;
     if (!show) return;
     const gait = Math.min(1, this.moveMag * (this.sprinting ? 1.5 : 1));
@@ -3093,7 +3154,7 @@ const FX = {
     const scx = W / 2, scy = H / 2, P = Player, acc = P.char.id === 'male' ? '#ff9a3a' : '#5dffe0';
     // third person aims from the body, not the lens, so the reticle follows the ray to its target
     let cx = scx, cy = scy;
-    if (Game.camMode === 'tp' && this.project(P.aimPoint(this._p))) { cx = this.sx; cy = this.sy; }
+    if (Game.camMode !== 'fp' && this.project(P.aimPoint(this._p))) { cx = this.sx; cy = this.sy; }
     // crosshair
     this.crossKick = Math.max(0, this.crossKick - dt * 5);
     const spread = 5 + P.moveMag * 5 + this.crossKick * 9 + P.bloom * 2.2;
@@ -3167,7 +3228,7 @@ const HUD = {
   dirty: true, last: {}, toastT: 0, subT: 0, bannerT: 0,
   init() {
     ['hud', 'controls', 'menu', 'pause', 'gameover', 'hpLabel', 'hpFill', 'hpNum', 'waveNum', 'zLeft', 'powerups', 'pillInsta', 'pillDbl', 'points', 'mult', 'kills', 'ammoMag', 'ammoRes', 'wpnName', 'reloadHint',
-      'subtitle', 'subName', 'subText', 'banner', 'bannerTitle', 'bannerSub', 'toast', 'fpsTag', 'muzzle', 'dmg', 'lowhp', 'flashwhite', 'btnAuto', 'autoState', 'btnSprint', 'joyHint', 'rotateHint',
+      'subtitle', 'subName', 'subText', 'banner', 'bannerTitle', 'bannerSub', 'toast', 'fpsTag', 'muzzle', 'dmg', 'lowhp', 'flashwhite', 'btnAuto', 'autoState', 'btnView', 'viewState', 'btnSprint', 'joyHint', 'rotateHint',
       'goWave', 'goPoints', 'goKills', 'goAcc', 'goHead', 'goTime', 'goBest', 'goTag', 'bestLine', 'optAuto', 'optVoice', 'optSound', 'optSens', 'sensVal', 'pOptAuto', 'pOptVoice', 'pOptSound', 'pOptSens', 'pSensVal', 'optCam', 'pOptCam', 'optSquad', 'pOptSquad', 'loadErr',
       'online', 'lobby', 'leaders', 'netStatus', 'roomList', 'inpName', 'inpCode', 'btnHost', 'btnJoinCode', 'btnOnline', 'btnOnlineBack',
       'btnLeaders', 'btnLeadersBack', 'btnLobbyStart', 'btnLobbyLeave', 'lobbyCode', 'lobbyPlayers', 'lobbyStatus', 'lobbyHint',
@@ -3252,7 +3313,7 @@ const HUD = {
   refreshOptions() {
     const G = Game;
     [DOM.optAuto, DOM.pOptAuto].forEach(e => { e.classList.toggle('on', G.autoFire); e.querySelector('span').textContent = G.autoFire ? 'ON' : 'OFF'; });
-    [DOM.optCam, DOM.pOptCam].forEach(e => { e.classList.toggle('on', G.camMode === 'tp'); e.querySelector('span').textContent = G.camMode === 'tp' ? '3RD' : '1ST'; });
+    [DOM.optCam, DOM.pOptCam].forEach(e => { e.classList.toggle('on', G.camMode !== 'fp'); e.querySelector('span').textContent = CAM_LABELS[G.camMode]; });
     // in coop the squad is the people you are actually playing with, so the bot control steps
     // aside; solo cycles OFF/1/2/3 bots on a single click-through control
     [DOM.optSquad, DOM.pOptSquad].forEach(e => {
@@ -3264,6 +3325,7 @@ const HUD = {
     [DOM.optSound, DOM.pOptSound].forEach(e => { e.classList.toggle('on', G.sound); e.querySelector('span').textContent = G.sound ? 'ON' : 'OFF'; });
     DOM.optSens.value = Input.sens; DOM.pOptSens.value = Input.sens; DOM.sensVal.textContent = Input.sens.toFixed(1); DOM.pSensVal.textContent = Input.sens.toFixed(1);
     DOM.btnAuto.classList.toggle('on', G.autoFire); DOM.autoState.textContent = G.autoFire ? 'ON' : 'OFF';
+    DOM.btnView.classList.toggle('on', G.camMode !== 'fp'); DOM.viewState.textContent = CAM_LABELS[G.camMode];
     DOM.bestLine.textContent = G.best.wave > 0 ? 'BEST RUN: WAVE ' + G.best.wave + ' · ' + fmt(G.best.points) + ' PTS' : '';
   }
 };
@@ -3738,6 +3800,9 @@ const Director = {
   }
 };
 
+// camera view cycle: 1st person -> close 3rd -> far 3rd -> almost-top-down far view -> back to 1st
+const CAM_MODES = ['fp', 'tp', 'tpFar', 'top'];
+const CAM_LABELS = { fp: '1ST', tp: '3RD', tpFar: 'FAR', top: 'TOP' };
 /* ------------------------------------------------------------------ game state, waves, economy, voice lines, main loop */
 const Game = {
   state: 'menu', time: 0, wave: 0, points: 0, kills: 0, shake: 0, insta: 0, dbl: 0, timeScale: 1, matchTime: 0,
@@ -3746,7 +3811,7 @@ const Game = {
   best: { wave: 0, points: 0 }, deathK: 0, deathRoll: 0, deathT: 0, seed: 0, coopMenu: false, _fp: { x: 0, z: 0 },
   fpsAcc: 0, fpsN: 0, fpsAvg: 16.7, fpsT: 0, resT: 0, chain: [], realDt: 0.016, newBest: false, _pt: { x: 0, z: 0 },
   init() {
-    try { const cm = localStorage.getItem('dnd_cam'); if (cm === 'tp' || cm === 'fp') this.camMode = cm; } catch (e) { }
+    try { const cm = localStorage.getItem('dnd_cam'); if (CAM_MODES.indexOf(cm) >= 0) this.camMode = cm; } catch (e) { }
     try { const sq = localStorage.getItem('dnd_squad'); if (sq === '0' || sq === '1') this.squad = sq === '1'; } catch (e) { }
     try { const sc = localStorage.getItem('dnd_squadcount'); if (sc != null) this.squadCount = clamp(parseInt(sc, 10) || 0, 0, 3); } catch (e) { }
     HUD.init(); HUD.refreshOptions();
@@ -3760,7 +3825,7 @@ const Game = {
     Input.on.select = function (i) { if (self.state === 'playing') Player.switchTo(i); };
     Input.on.auto = function () { self.autoFire = !self.autoFire; HUD.refreshOptions(); HUD.toast('AUTO-FIRE ' + (self.autoFire ? 'ON' : 'OFF')); };
     Input.on.sprint = function () { if (self.state === 'playing') Player.toggleSprint(); };
-    Input.on.camera = function () { self.setCamMode(self.camMode === 'tp' ? 'fp' : 'tp'); HUD.toast(self.camMode === 'tp' ? 'THIRD PERSON' : 'FIRST PERSON', 1.4); };
+    Input.on.camera = function () { self.cycleCamMode(); };
     Input.on.pause = function () { if (Layout.editing) { Layout.end(); return; } if (self.coopMenu) self.resume(); else if (self.state === 'playing') self.pause(); else if (self.state === 'paused') self.resume(); };
     // menu
     $('btnStart').addEventListener('click', () => { Audio.unlock(); self.start(); });
@@ -3775,7 +3840,7 @@ const Game = {
     $('btnMenu').addEventListener('click', () => self.toMenu());
     const optToggle = (els, fn) => els.forEach(e => e.addEventListener('click', () => { fn(); HUD.refreshOptions(); }));
     optToggle([DOM.optAuto, DOM.pOptAuto], () => self.autoFire = !self.autoFire);
-    optToggle([DOM.optCam, DOM.pOptCam], () => self.setCamMode(self.camMode === 'tp' ? 'fp' : 'tp'));
+    optToggle([DOM.optCam, DOM.pOptCam], () => self.cycleCamMode());
     optToggle([DOM.optSquad, DOM.pOptSquad], () => self.setSquadCount((self.squadCount + 1) % 4));
     optToggle([DOM.optVoice, DOM.pOptVoice], () => self.voice = !self.voice);
     optToggle([DOM.optSound, DOM.pOptSound], () => { self.sound = !self.sound; Audio.setEnabled(self.sound); });
@@ -3792,10 +3857,15 @@ const Game = {
   },
   updateRotateHint() { const portrait = window.innerHeight > window.innerWidth && ('ontouchstart' in window); DOM.rotateHint.textContent = portrait ? 'ROTATE TO LANDSCAPE FOR THE BEST EXPERIENCE' : ''; },
   setCamMode(mode) {
-    this.camMode = mode === 'tp' ? 'tp' : 'fp';
+    this.camMode = CAM_MODES.indexOf(mode) >= 0 ? mode : 'fp';
     try { localStorage.setItem('dnd_cam', this.camMode); } catch (e) { }
     if (this.camMode === 'fp' && Player.body) { Player.body.g.visible = false; Player.body.shadow.visible = false; }
     HUD.refreshOptions();
+  },
+  cycleCamMode() {
+    const i = CAM_MODES.indexOf(this.camMode);
+    this.setCamMode(CAM_MODES[(i + 1) % CAM_MODES.length]);
+    HUD.toast(CAM_LABELS[this.camMode] + ' VIEW', 1.4);
   },
   // One control cycles OFF/1/2/3 rather than a separate on-off toggle plus a count, since 0 IS
   // "off". Changing it mid-run takes effect immediately — waiting for the next run to find out
